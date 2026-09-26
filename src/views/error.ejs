@@ -1,0 +1,24 @@
+<div style="max-width: 600px; margin: 3rem auto; text-align: center;">
+  <div class="card" style="border-top: 4px solid var(--danger);">
+    <div style="margin-bottom: 1rem;">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2" style="margin: 0 auto;">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="8" x2="12" y2="12"/>
+        <line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+    </div>
+
+    <h1 style="font-size: 1.5rem; font-weight: 700; margin-bottom: 0.75rem; color: var(--text-main);">
+      <%= title %>
+    </h1>
+
+    <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 1.75rem; line-height: 1.6;">
+      <%= message %>
+    </p>
+
+    <div style="display: flex; justify-content: center; gap: 1rem;">
+      <a href="/" class="btn btn-outline">Retour à l’accueil</a>
+      <a href="/auth/discord" class="btn btn-discord">Réessayer</a>
+    </div>
+  </div>
+</div>
