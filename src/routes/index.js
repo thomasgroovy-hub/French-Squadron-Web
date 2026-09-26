@@ -10,7 +10,8 @@ import {
 } from '../services/discord.js';
 import { getLinkedRobloxData } from '../services/roblox.js';
 import { fetchMemberSanctions } from '../services/sanctions.js';
-import { fetchSiteUser, fetchSiteUsers } from '../services/members.js';
+import { fetchMemberDeaths } from '../services/deaths.js';
+import { fetchAllLinkedMembers, fetchLinkedMember } from '../services/members.js';
 import { getGrades, getRoleLabels } from '../config/roles.js';
 import { hasFormsRole } from '../auth/guards.js';
 import { createFormsRouter, createResponsesRouter } from './forms.js';
@@ -130,7 +131,7 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
   router.get('/members', async (req, res) => {
     try {
       const search = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
-      const users = await fetchSiteUsers(search, pool);
+      const users = await fetchAllLinkedMembers(search, { pool, sitePool, fetchFn });
       let nextIndex = 0;
       await Promise.all(Array.from({ length: Math.min(6, users.length) }, async () => {
         while (nextIndex < users.length) {
@@ -157,11 +158,11 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
 
   router.get('/members/:discordUserId', async (req, res) => {
     try {
-      const member = await fetchSiteUser(req.params.discordUserId, pool);
+      const member = await fetchLinkedMember(req.params.discordUserId, { pool, sitePool, fetchFn });
       if (!member) {
         return res.status(404).render('error', {
           title: 'Membre introuvable',
-          message: 'Aucune connexion web enregistrée pour ce compte.',
+          message: 'Aucun lien Roblox-Discord trouvé pour ce compte.',
         });
       }
       const targetUser = {
@@ -172,9 +173,11 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       };
       const roleData = await fetchGuildMemberRoles({ userId: targetUser.id, fetchFn });
       const profile = await buildProfileData(targetUser, roleData, { staffView: true });
+      const deaths = await fetchMemberDeaths(targetUser.id, pool);
       res.render('profile-detail', {
         title: `${targetUser.globalName} | Supervision`,
         ...profile,
+        deaths,
         isStaffView: true,
         isReadOnly: true,
       });

@@ -1,4 +1,5 @@
-import { getDatabasePool } from '../database.js';
+import { getDatabasePool, getSiteDatabasePool } from '../database.js';
+import { webConfig } from '../config.js';
 
 const initializedPools = new WeakMap();
 
@@ -43,6 +44,110 @@ export async function recordSiteLogin(user, pool = getDatabasePool()) {
   } catch (error) {
     console.error('[MembersService] Unable to record site login:', error.message);
     return false;
+  }
+}
+
+async function fetchDiscordUserViaBot(userId, { botToken = webConfig.discordToken, fetchFn = fetch } = {}) {
+  if (!botToken || !userId) return null;
+  try {
+    const response = await fetchFn(`https://discord.com/api/v10/users/${userId}`, {
+      headers: { Authorization: `Bot ${botToken}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return null;
+    const user = await response.json();
+    return {
+      id: user.id,
+      username: user.username,
+      globalName: user.global_name || user.username,
+      avatarUrl: user.avatar
+        ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${user.avatar.startsWith('a_') ? 'gif' : 'png'}?size=256`
+        : `https://cdn.discordapp.com/embed/avatars/${Number(user.discriminator || 0) % 5}.png`,
+    };
+  } catch (error) {
+    console.error(`[MembersService] Failed to fetch Discord user ${userId} via bot:`, error.message);
+    return null;
+  }
+}
+
+export async function fetchAllLinkedMembers(search = '', { pool = getDatabasePool(), sitePool = getSiteDatabasePool(), fetchFn = fetch } = {}) {
+  const readPool = sitePool || pool;
+  if (!readPool) return [];
+  try {
+    const term = `%${search.trim()}%`;
+    const [rows] = await readPool.execute(
+      `SELECT
+         links.discord_user_id,
+         links.roblox_user_id,
+         links.roblox_username,
+         links.verification_rank,
+         links.verified_at
+       FROM roblox_links AS links
+       WHERE ? = '%%'
+          OR links.discord_user_id LIKE ?
+          OR links.roblox_username LIKE ?
+       ORDER BY links.verified_at DESC`,
+      [term, term, term],
+    );
+
+    const members = [];
+    for (const row of rows) {
+      const discordUser = await fetchDiscordUserViaBot(row.discord_user_id, { fetchFn });
+      members.push({
+        discord_user_id: row.discord_user_id,
+        discord_username: discordUser?.username || 'Inconnu',
+        global_name: discordUser?.globalName || 'Inconnu',
+        avatar_url: discordUser?.avatarUrl || `https://cdn.discordapp.com/embed/avatars/${Number(row.discord_user_id.slice(-1)) % 5}.png`,
+        last_login: null,
+        roblox_username: row.roblox_username,
+        roblox_user_id: row.roblox_user_id,
+        verification_rank: row.verification_rank,
+        verified_at: row.verified_at,
+        hasSiteSession: false,
+      });
+    }
+    return members;
+  } catch (error) {
+    console.error('[MembersService] Unable to fetch all linked members:', error.message);
+    return [];
+  }
+}
+
+export async function fetchLinkedMember(discordUserId, { pool = getDatabasePool(), sitePool = getSiteDatabasePool(), fetchFn = fetch } = {}) {
+  const readPool = sitePool || pool;
+  if (!readPool || !discordUserId) return null;
+  try {
+    const [rows] = await readPool.execute(
+      `SELECT
+         links.discord_user_id,
+         links.roblox_user_id,
+         links.roblox_username,
+         links.verification_rank,
+         links.verified_at
+       FROM roblox_links AS links
+       WHERE links.discord_user_id = ?
+       LIMIT 1`,
+      [discordUserId],
+    );
+    if (!rows[0]) return null;
+
+    const row = rows[0];
+    const discordUser = await fetchDiscordUserViaBot(row.discord_user_id, { fetchFn });
+    return {
+      discord_user_id: row.discord_user_id,
+      discord_username: discordUser?.username || 'Inconnu',
+      global_name: discordUser?.globalName || 'Inconnu',
+      avatar_url: discordUser?.avatarUrl || `https://cdn.discordapp.com/embed/avatars/${Number(row.discord_user_id.slice(-1)) % 5}.png`,
+      last_login: null,
+      roblox_username: row.roblox_username,
+      roblox_user_id: row.roblox_user_id,
+      verification_rank: row.verification_rank,
+      verified_at: row.verified_at,
+      hasSiteSession: false,
+    };
+  } catch (error) {
+    console.error('[MembersService] Unable to fetch linked member:', error.message);
+    return null;
   }
 }
 

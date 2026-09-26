@@ -137,13 +137,53 @@
             </div>
           <% } %>
         </section>
-      <% } else { %>
+<% } else { %>
         <section class="card">
           <div class="section-head">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5"/></svg>
             <h2>Sanctions non affichées</h2>
           </div>
-          <p class="muted">L’historique des sanctions de cette fiche est réservé aux membres possédant le rôle de supervision.</p>
+          <p class="muted">L'historique des sanctions de cette fiche est réservé aux membres possédant le rôle de supervision.</p>
+        </section>
+      <% } %>
+
+      <% if (isStaffView) { %>
+        <section class="card">
+          <div class="section-head">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M17.5 2.5a2.5 2.5 0 012.5 2.5v13a4 4 0 01-4 4H5a4 4 0 01-4-4v-13A2.5 2.5 0 012.5 2.5h15z"/><path d="M12 8v8"/></svg>
+            <h2>Décès (Permadeath)</h2>
+            <span class="row-aside"><span class="badge badge-cyan"><%= deaths?.length || 0 %></span></span>
+          </div>
+          <% if (deaths && deaths.length) { %>
+            <div class="row-list">
+              <% deaths.forEach((death) => { %>
+                <article class="data-row">
+                  <span class="row-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17.5 2.5a2.5 2.5 0 012.5 2.5v13a4 4 0 01-4 4H5a4 4 0 01-4-4v-13A2.5 2.5 0 012.5 2.5h15z"/><path d="M12 8v8"/></svg>
+                  </span>
+                  <div class="row-body">
+                    <div class="row-title">Mort en jeu</div>
+                    <div class="row-subtitle">
+                      Roblox: <%= death.robloxUserId %>
+                      <% if (death.eventId) { %> · Événement: <code><%= death.eventId %></code><% } %>
+                      <% if (death.context) { %> · <%= death.context.slice(0, 200) %><% } %>
+                    </div>
+                  </div>
+                  <div class="row-aside">
+                    <span class="badge badge-danger">Permadeath</span>
+                    <span class="row-date"><%= death.formattedDate %></span>
+                  </div>
+                </article>
+              <% }); %>
+            </div>
+          <% } else { %>
+            <div class="empty-state">
+              <span class="empty-state-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17.5 2.5a2.5 2.5 0 012.5 2.5v13a4 4 0 01-4 4H5a4 4 0 01-4-4v-13A2.5 2.5 0 012.5 2.5h15z"/><path d="M12 8v8"/></svg>
+              </span>
+              <p>Aucun décès enregistré</p>
+            </div>
+          <% } %>
         </section>
       <% } %>
     </div>

@@ -1,7 +1,7 @@
 <section class="card">
   <p class="eyebrow">Espace staff</p>
   <h1 style="font-size: 1.8rem; margin: 0.35rem 0;">Supervision des membres</h1>
-  <p class="muted">Comptes ayant déjà ouvert une session sur le portail.</p>
+  <p class="muted">Tous les comptes liés Roblox ↔ Discord (table de liaison), qu'ils se soient connectés au portail ou non.</p>
 </section>
 
 <section style="margin-top: 1rem;">
@@ -24,7 +24,13 @@
               <span class="tag-list"><% member.grades.forEach((grade) => { %><span class="role-tag"><%= grade %></span><% }); %></span>
             <% } else { %><span class="muted">Aucun</span><% } %>
           </span>
-          <span class="muted" style="font-size: 0.8rem;">Dernière connexion<br><%= member.last_login ? new Date(member.last_login).toLocaleDateString('fr-FR') : 'Inconnue' %></span>
+          <span class="muted" style="font-size: 0.8rem;">
+            <% if (member.verified_at) { %>
+              Vérifié le <%= new Date(member.verified_at).toLocaleDateString('fr-FR') %>
+            <% } else { %>
+              Non vérifié
+            <% } %>
+          </span>
         </a>
       <% }); %>
     </div>
