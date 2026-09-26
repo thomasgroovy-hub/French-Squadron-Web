@@ -19,15 +19,21 @@ export const FIELD_TYPES = Object.freeze({
 
 export const FIELD_TYPE_VALUES = Object.freeze(Object.values(FIELD_TYPES));
 
-const initializedPools = new WeakMap();
+const initializedPools = new Map();
 
 /**
  * Creates the forms tables on the shared MySQL pool. Same lazy
  * `CREATE TABLE IF NOT EXISTS` pattern as `services/members.js` so no
  * migration step is required on deploy.
  */
+function getPoolKey(pool) {
+  const config = pool.config || pool._config || {};
+  return `${config.host}:${config.database}`;
+}
+
 export async function ensureFormsTables(pool) {
-  let initialization = initializedPools.get(pool);
+  const poolKey = getPoolKey(pool);
+  let initialization = initializedPools.get(poolKey);
   if (!initialization) {
     initialization = (async () => {
       await pool.execute(`
@@ -80,10 +86,10 @@ export async function ensureFormsTables(pool) {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
     })().catch((error) => {
-      initializedPools.delete(pool);
+      initializedPools.delete(poolKey);
       throw error;
     });
-    initializedPools.set(pool, initialization);
+    initializedPools.set(poolKey, initialization);
   }
   return initialization;
 }
@@ -214,13 +220,26 @@ export async function createForm({
 }) {
   if (!pool) return null;
   await ensureFormsTables(pool);
-  const [result] = await pool.execute(
-    'INSERT INTO forms (creator_discord_id, title, description, granted_role_id) VALUES (?, ?, ?, ?)',
-    [creatorDiscordId, title, description, grantedRoleId || null],
-  );
-  const formId = result.insertId;
-  await syncQuestions(formId, questions, pool);
-  return getFormById(formId, pool);
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [result] = await connection.execute(
+      'INSERT INTO forms (creator_discord_id, title, description, granted_role_id) VALUES (?, ?, ?, ?)',
+      [creatorDiscordId, title, description, grantedRoleId || null],
+    );
+    const formId = result.insertId;
+    await syncQuestions(formId, questions, connection);
+    await connection.commit();
+
+    return getFormById(formId, pool);
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 export async function updateForm({
@@ -234,15 +253,31 @@ export async function updateForm({
 }) {
   if (!pool || !formId) return null;
   await ensureFormsTables(pool);
-  const [result] = await pool.execute(
-    `UPDATE forms
-     SET title = ?, description = ?, granted_role_id = ?
-     WHERE id = ? AND creator_discord_id = ?`,
-    [title, description, grantedRoleId || null, formId, creatorDiscordId],
-  );
-  if (!result.affectedRows) return null;
-  await syncQuestions(formId, questions, pool);
-  return getFormById(formId, pool);
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [result] = await connection.execute(
+      `UPDATE forms
+       SET title = ?, description = ?, granted_role_id = ?
+       WHERE id = ? AND creator_discord_id = ?`,
+      [title, description, grantedRoleId || null, formId, creatorDiscordId],
+    );
+    if (!result.affectedRows) {
+      await connection.rollback();
+      return null;
+    }
+    await syncQuestions(formId, questions, connection);
+    await connection.commit();
+
+    return getFormById(formId, pool);
+  } catch (error) {
+    await connection.rollback().catch(() => {});
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 /**
@@ -253,7 +288,7 @@ export async function updateForm({
  */
 async function syncQuestions(formId, questions, pool) {
   const [existingRows] = await pool.execute(
-    'SELECT id FROM form_questions WHERE form_id = ?',
+    'SELECT id FROM form_questions WHERE form_id = ? FOR UPDATE',
     [formId],
   );
   const existingIds = new Set(existingRows.map((row) => Number(row.id)));
@@ -330,13 +365,15 @@ export async function getPublishCooldownRemaining(creatorDiscordId, cooldownMinu
   try {
     await ensureFormsTables(pool);
     const [rows] = await pool.execute(
-      'SELECT MAX(published_at) AS last_published_at, TIMESTAMPDIFF(MINUTE, MAX(published_at), CURRENT_TIMESTAMP) AS minutes_since FROM forms WHERE creator_discord_id = ? AND published_at IS NOT NULL',
+      'SELECT MAX(published_at) AS last_published_at FROM forms WHERE creator_discord_id = ? AND published_at IS NOT NULL',
       [creatorDiscordId],
     );
-    // `MAX()` over an empty set is NULL, and `Number(null)` is 0: a creator who
-    // never published must not be mistaken for someone who just published.
+    // `MAX()` over an empty set is NULL: a creator who never published must not be mistaken for someone who just published.
     if (rows[0]?.last_published_at == null) return 0;
-    const minutesSince = Number(rows[0]?.minutes_since);
+    const lastPublishedAt = new Date(rows[0].last_published_at);
+    if (Number.isNaN(lastPublishedAt.getTime())) return 0;
+    const now = new Date();
+    const minutesSince = Math.floor((now.getTime() - lastPublishedAt.getTime()) / 60000);
     if (!Number.isFinite(minutesSince)) return 0;
     return Math.max(0, Math.ceil(cooldown - minutesSince));
   } catch (error) {

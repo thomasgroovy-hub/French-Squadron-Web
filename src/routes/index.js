@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { requireAuth } from '../auth/session.js';
 import { webConfig } from '../config.js';
 import {
@@ -27,13 +27,15 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       res.locals.isStaff = req.memberData.hasTargetRole;
       // Forms/documentation management role, independent from the sanctions one.
       res.locals.isFormManager = hasFormsRole(req.memberData);
+      // Cache for Roblox data to avoid duplicate fetches per request
+      req.robloxCache = new Map();
       next();
     } catch (error) {
       next(error);
     }
   });
 
-  async function buildProfileData(user, memberData, { staffView = false } = {}) {
+  async function buildProfileData(req, user, memberData, { staffView = false } = {}) {
     const discordCreatedAt = getDiscordCreationDate(user.id);
     const discordInfo = {
       id: user.id,
@@ -44,7 +46,12 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       formattedCreatedAt: formatDate(discordCreatedAt),
       accountAge: formatAccountAge(discordCreatedAt),
     };
-    const roblox = await getLinkedRobloxData(user.id, { pool, sitePool, fetchFn });
+    const cacheKey = user.id;
+    let roblox = req.robloxCache?.get(cacheKey);
+    if (!roblox) {
+      roblox = await getLinkedRobloxData(user.id, { pool, sitePool, fetchFn });
+      req.robloxCache?.set(cacheKey, roblox);
+    }
     const hasTargetRole = Boolean(memberData?.hasTargetRole);
     const roleNames = await fetchGuildRoleNames({ fetchFn });
     const grades = getGrades(memberData?.roles || [], roleNames);
@@ -82,15 +89,15 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
     } catch (error) {
       console.error('[WebRoutes] Error rendering dashboard:', error);
       return res.status(500).render('error', {
-        title: 'Erreur lors du chargement de l’accueil',
-        message: 'Impossible de charger les informations du compte. Veuillez réessayer plus tard.',
+        title: 'Erreur lors du chargement de lâ€™accueil',
+        message: 'Impossible de charger les informations du compte. Veuillez rÃ©essayer plus tard.',
       });
     }
   });
 
   router.get('/profile', requireAuth, async (req, res) => {
     try {
-      const profile = await buildProfileData(req.session.user, req.memberData);
+      const profile = await buildProfileData(req, req.session.user, req.memberData);
       res.render('profile-detail', {
         title: 'Mon Profil | Site-66',
         ...profile,
@@ -99,20 +106,20 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       console.error('[WebRoutes] Error rendering profile:', error);
       res.status(500).render('error', {
         title: 'Erreur lors du chargement du profil',
-        message: 'Impossible de charger l’ensemble des informations du profil. Veuillez réessayer plus tard.',
+        message: 'Impossible de charger lâ€™ensemble des informations du profil. Veuillez rÃ©essayer plus tard.',
       });
     }
   });
 
   router.get('/terms', (req, res) => {
-    res.render('terms', { title: 'Conditions Générales d’Utilisation' });
+    res.render('terms', { title: 'Conditions GÃ©nÃ©rales dâ€™Utilisation' });
   });
 
   router.get('/privacy', (req, res) => {
-    res.render('privacy', { title: 'Politique de Confidentialité' });
+    res.render('privacy', { title: 'Politique de ConfidentialitÃ©' });
   });
 
-  // « Candidatures » is open to any connected member; « Réponses » and the
+  // Â« Candidatures Â» is open to any connected member; Â« RÃ©ponses Â» and the
   // documentation manager require the forms role.
   router.use('/candidatures', createFormsRouter({ pool, fetchFn }));
   router.use('/reponses', createResponsesRouter({ pool, fetchFn }));
@@ -121,8 +128,8 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
   router.use('/members', requireAuth, (req, res, next) => {
     if (!req.memberData?.hasTargetRole) {
       return res.status(403).render('error', {
-        title: 'Accès réservé',
-        message: 'Cette section est réservée aux membres de la supervision.',
+        title: 'AccÃ¨s rÃ©servÃ©',
+        message: 'Cette section est rÃ©servÃ©e aux membres de la supervision.',
       });
     }
     next();
@@ -151,7 +158,7 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       console.error('[WebRoutes] Error loading member directory:', error);
       res.status(500).render('error', {
         title: 'Erreur lors du chargement des membres',
-        message: 'Impossible de charger la liste des membres. Veuillez réessayer plus tard.',
+        message: 'Impossible de charger la liste des membres. Veuillez rÃ©essayer plus tard.',
       });
     }
   });
@@ -162,7 +169,7 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       if (!member) {
         return res.status(404).render('error', {
           title: 'Membre introuvable',
-          message: 'Aucun lien Roblox-Discord trouvé pour ce compte.',
+          message: 'Aucun lien Roblox-Discord trouvÃ© pour ce compte.',
         });
       }
       const targetUser = {
@@ -172,8 +179,8 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
         avatarUrl: member.avatar_url,
       };
       const roleData = await fetchGuildMemberRoles({ userId: targetUser.id, fetchFn });
-      const profile = await buildProfileData(targetUser, roleData, { staffView: true });
-      const deaths = await fetchMemberDeaths(targetUser.id, pool);
+      const profile = await buildProfileData(req, targetUser, roleData, { staffView: true });
+      const deaths = await fetchMemberDeaths(targetUser.id, pool, { isStaff: true });
       res.render('profile-detail', {
         title: `${targetUser.globalName} | Supervision`,
         ...profile,
@@ -185,10 +192,12 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       console.error('[WebRoutes] Error rendering supervised profile:', error);
       res.status(500).render('error', {
         title: 'Erreur lors du chargement du profil',
-        message: 'Impossible de charger la fiche de ce membre. Veuillez réessayer plus tard.',
+        message: 'Impossible de charger la fiche de ce membre. Veuillez rÃ©essayer plus tard.',
       });
     }
   });
 
   return router;
 }
+
+

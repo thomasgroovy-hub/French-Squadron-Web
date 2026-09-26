@@ -1,10 +1,27 @@
 import { getDatabasePool, getSiteDatabasePool } from '../database.js';
 import { webConfig } from '../config.js';
 
-const initializedPools = new WeakMap();
+const initializedPools = new Map();
+
+function getPoolKey(pool) {
+  const config = pool.config || pool._config || {};
+  return `${config.host}:${config.database}`;
+}
+
+let sitePoolInstance = null;
+function getSitePool() {
+  if (sitePoolInstance) return sitePoolInstance;
+  try {
+    sitePoolInstance = getSiteDatabasePool();
+  } catch {
+    sitePoolInstance = false;
+  }
+  return sitePoolInstance || null;
+}
 
 async function ensureSiteUsersTable(pool) {
-  let initialization = initializedPools.get(pool);
+  const poolKey = getPoolKey(pool);
+  let initialization = initializedPools.get(poolKey);
   if (!initialization) {
     initialization = pool.execute(`
       CREATE TABLE IF NOT EXISTS site_users (
@@ -17,10 +34,10 @@ async function ensureSiteUsersTable(pool) {
         INDEX site_users_last_login_idx (last_login)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `).catch((error) => {
-      initializedPools.delete(pool);
+      initializedPools.delete(poolKey);
       throw error;
     });
-    initializedPools.set(pool, initialization);
+    initializedPools.set(poolKey, initialization);
   }
   await initialization;
 }
@@ -70,7 +87,7 @@ async function fetchDiscordUserViaBot(userId, { botToken = webConfig.discordToke
   }
 }
 
-export async function fetchAllLinkedMembers(search = '', { pool = getDatabasePool(), sitePool = getSiteDatabasePool(), fetchFn = fetch } = {}) {
+export async function fetchAllLinkedMembers(search = '', { pool = getDatabasePool(), sitePool = getSitePool(), fetchFn = fetch } = {}) {
   const readPool = sitePool || pool;
   if (!readPool) return [];
   try {
@@ -113,7 +130,7 @@ export async function fetchAllLinkedMembers(search = '', { pool = getDatabasePoo
   }
 }
 
-export async function fetchLinkedMember(discordUserId, { pool = getDatabasePool(), sitePool = getSiteDatabasePool(), fetchFn = fetch } = {}) {
+export async function fetchLinkedMember(discordUserId, { pool = getDatabasePool(), sitePool = getSitePool(), fetchFn = fetch } = {}) {
   const readPool = sitePool || pool;
   if (!readPool || !discordUserId) return null;
   try {

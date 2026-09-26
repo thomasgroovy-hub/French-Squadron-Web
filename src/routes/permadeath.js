@@ -1,0 +1,61 @@
+import { Router } from 'express';
+import crypto from 'node:crypto';
+import { recordDeath } from '../services/deaths.js';
+import { webConfig } from '../config.js';
+
+export function createPermadeathRouter({ pool } = {}) {
+  const router = Router();
+
+  router.post('/v1/roblox/permadeath-death', async (req, res) => {
+    try {
+      const secret = process.env.PERMADEATH_WEBHOOK_SECRET;
+      if (!secret) {
+        console.error('[PermadeathWebhook] PERMADEATH_WEBHOOK_SECRET not configured');
+        return res.status(500).json({ ok: false, error: 'Webhook not configured' });
+      }
+
+      const signature = req.headers['x-signature'];
+      if (!signature) {
+        return res.status(401).json({ ok: false, error: 'Missing signature' });
+      }
+
+      const payload = JSON.stringify(req.body);
+      const expectedSignature = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+
+      if (signature !== expectedSignature) {
+        return res.status(401).json({ ok: false, error: 'Invalid signature' });
+      }
+
+      const { discordUserId, robloxUserId, eventId, context, occurredAt } = req.body;
+
+      if (!discordUserId || !robloxUserId) {
+        return res.status(400).json({ ok: false, error: 'discordUserId and robloxUserId are required' });
+      }
+
+      const occurredAtDate = occurredAt ? new Date(occurredAt) : new Date();
+      if (Number.isNaN(occurredAtDate.getTime())) {
+        return res.status(400).json({ ok: false, error: 'Invalid occurredAt date' });
+      }
+
+      const success = await recordDeath({
+        discordUserId,
+        robloxUserId,
+        eventId: eventId || null,
+        context: context || null,
+        occurredAt: occurredAtDate,
+        pool,
+      });
+
+      if (!success) {
+        return res.status(500).json({ ok: false, error: 'Failed to record death' });
+      }
+
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error('[PermadeathWebhook] Error:', error);
+      return res.status(500).json({ ok: false, error: 'Internal server error' });
+    }
+  });
+
+  return router;
+}

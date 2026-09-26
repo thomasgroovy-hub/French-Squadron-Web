@@ -28,7 +28,10 @@ export function getSiteDatabasePool() {
   if (sitePoolInstance) return sitePoolInstance;
 
   const required = ['SITE_MYSQL_HOST', 'SITE_MYSQL_USER', 'SITE_MYSQL_PASSWORD', 'SITE_MYSQL_DATABASE'];
-  if (required.some((name) => !process.env[name])) return null;
+  const missing = required.filter((name) => !process.env[name]);
+  if (missing.length > 0) {
+    throw new Error(`Missing required environment variables for site database: ${missing.join(', ')}. Set SITE_MYSQL_HOST, SITE_MYSQL_USER, SITE_MYSQL_PASSWORD, SITE_MYSQL_DATABASE.`);
+  }
 
   sitePoolInstance = mysql.createPool({
     host: process.env.SITE_MYSQL_HOST,

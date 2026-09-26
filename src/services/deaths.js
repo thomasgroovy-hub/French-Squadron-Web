@@ -1,10 +1,16 @@
 import { getDatabasePool } from '../database.js';
 import { formatDate } from './discord.js';
 
-const initializedPools = new WeakMap();
+const initializedPools = new Map();
+
+function getPoolKey(pool) {
+  const config = pool.config || pool._config || {};
+  return `${config.host}:${config.database}`;
+}
 
 async function ensurePermadeathDeathsTable(pool) {
-  let initialization = initializedPools.get(pool);
+  const poolKey = getPoolKey(pool);
+  let initialization = initializedPools.get(poolKey);
   if (!initialization) {
     initialization = pool.execute(`
       CREATE TABLE IF NOT EXISTS permadeath_deaths (
@@ -20,10 +26,10 @@ async function ensurePermadeathDeathsTable(pool) {
         INDEX permadeath_deaths_occurred_idx (occurred_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `).catch((error) => {
-      initializedPools.delete(pool);
+      initializedPools.delete(poolKey);
       throw error;
     });
-    initializedPools.set(pool, initialization);
+    initializedPools.set(poolKey, initialization);
   }
   await initialization;
 }
@@ -53,8 +59,9 @@ export async function recordDeath({
 
 export { ensurePermadeathDeathsTable };
 
-export async function fetchMemberDeaths(discordUserId, pool = getDatabasePool()) {
+export async function fetchMemberDeaths(discordUserId, pool = getDatabasePool(), { isStaff = false } = {}) {
   if (!pool || !discordUserId) return [];
+  if (!isStaff) return [];
   try {
     await ensurePermadeathDeathsTable(pool);
     const [rows] = await pool.execute(

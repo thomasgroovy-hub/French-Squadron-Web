@@ -1,5 +1,9 @@
 import 'dotenv/config';
 
+if (!process.env.SESSION_SECRET) {
+  throw new Error('SESSION_SECRET is required. Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+}
+
 export const webConfig = {
   clientId: process.env.DISCORD_CLIENT_ID || process.env.DISCORD_APPLICATION_ID,
   clientSecret: process.env.DISCORD_CLIENT_SECRET,

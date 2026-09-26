@@ -6,6 +6,7 @@ import { webConfig, validateWebConfig } from './config.js';
 import { sessionMiddleware } from './auth/session.js';
 import { createOAuthRouter } from './auth/oauth.js';
 import { createMainRouter } from './routes/index.js';
+import { createPermadeathRouter } from './routes/permadeath.js';
 
 import { getDatabasePool, getSiteDatabasePool } from './database.js';
 
@@ -25,7 +26,13 @@ const __dirname = path.dirname(__filename);
 
 export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) {
   if (pool === undefined) pool = getDatabasePool();
-  if (sitePool === undefined) sitePool = getSiteDatabasePool();
+  if (sitePool === undefined) {
+    try {
+      sitePool = getSiteDatabasePool();
+    } catch {
+      sitePool = null;
+    }
+  }
   const app = express();
 
   // Configuration du moteur de vues EJS
@@ -73,6 +80,7 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
   // Montage des routeurs
   app.use('/auth', createOAuthRouter({ config, fetchFn, pool }));
   app.use('/', createMainRouter({ pool, sitePool, fetchFn }));
+  app.use('/', createPermadeathRouter({ pool }));
   
 
   // Gestion des pages non trouvées (404)
@@ -99,8 +107,15 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
 export function startWebServer({
   port = webConfig.port,
   pool = getDatabasePool(),
-  sitePool = getSiteDatabasePool(),
+  sitePool,
 } = {}) {
+  if (sitePool === undefined) {
+    try {
+      sitePool = getSiteDatabasePool();
+    } catch {
+      sitePool = null;
+    }
+  }
   const { valid, missing } = validateWebConfig();
   if (!valid) {
     console.warn(

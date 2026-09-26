@@ -22,13 +22,28 @@ export function formatAccountAge(createdAt, now = new Date()) {
   return `${years} an${years > 1 ? 's' : ''}, ${months} mois`;
 }
 
+let userTimeZone = 'Europe/Paris';
+
+export function setUserTimeZone(timeZone) {
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone }).resolvedOptions().timeZone;
+    userTimeZone = timeZone;
+  } catch {
+    userTimeZone = 'Europe/Paris';
+  }
+}
+
+export function getUserTimeZone() {
+  return userTimeZone;
+}
+
 export function formatDate(date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return 'Inconnue';
   return new Intl.DateTimeFormat('fr-FR', {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
-    timeZone: 'UTC',
+    timeZone: userTimeZone,
   }).format(date);
 }
 
@@ -39,7 +54,7 @@ export function formatDate(date) {
  * Cached in memory because the guild role list is near-static.
  */
 const guildRoleNameCache = new Map();
-const GUILD_ROLE_TTL_MS = 10 * 60 * 1000;
+const GUILD_ROLE_TTL_MS = 2 * 60 * 1000;
 
 export async function fetchGuildRoleNames({
   guildId = webConfig.guildId,
@@ -80,6 +95,10 @@ export async function fetchGuildRoleNames({
     console.error(`[DiscordService] Error fetching roles for guild ${guildId}:`, error.message);
     return new Map();
   }
+}
+
+export function invalidateGuildRoleCache(guildId = webConfig.guildId) {
+  guildRoleNameCache.delete(guildId);
 }
 
 /**

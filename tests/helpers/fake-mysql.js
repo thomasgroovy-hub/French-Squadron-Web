@@ -18,6 +18,8 @@ function emptyStore() {
     documentationBlocks: [],
     siteUsers: [],
     robloxLinks: [],
+    strikes: [],
+    cases: [],
   };
 }
 
@@ -132,6 +134,16 @@ class FakeMysqlPool {
       return [[{ last_published_at: last, minutes_since: last ? 10 : null }]];
     }
 
+    // Support the new getPublishCooldownRemaining query without TIMESTAMPDIFF
+    if (/SELECT MAX\(published_at\) AS last_published_at FROM forms/i.test(sql)) {
+      const published = this.store.forms
+        .filter((form) => form.creator_discord_id === params[0] && form.published_at)
+        .map((form) => form.published_at)
+        .sort((a, b) => b - a);
+      const last = published[0] ?? null;
+      return [[{ last_published_at: last }]];
+    }
+
     // --------------------------------------------------------- form_questions
     if (/^SELECT id, form_id, position, label, help_text, field_type FROM form_questions/i.test(sql)) {
       const rows = this.store.formQuestions
@@ -141,7 +153,7 @@ class FakeMysqlPool {
       return [rows];
     }
 
-    if (/^SELECT id FROM form_questions WHERE form_id = \?$/i.test(sql)) {
+    if (/^SELECT id FROM form_questions WHERE form_id = \?/i.test(sql)) {
       return [this.store.formQuestions
         .filter((row) => row.form_id === Number(params[0]))
         .map((row) => ({ id: row.id }))];
@@ -310,7 +322,26 @@ class FakeMysqlPool {
 
     // ------------------------------------------------- roblox_discord_links
     // Read by RobloxService when rendering the connected dashboard.
-    if (/FROM roblox_discord_links/i.test(sql)) {
+    if (/FROM roblox_links/i.test(sql) || /FROM roblox_discord_links/i.test(sql)) {
+      // Handle both simple lookup and search query
+      if (params[0] && params[0].startsWith('%')) {
+        // Search query: WHERE ? = '%%' OR links.discord_user_id LIKE ? OR links.roblox_username LIKE ?
+        const term = params[1]?.replace(/%/g, '') ?? '';
+        return [this.store.robloxLinks
+          ?.filter((l) => 
+            term === '' || 
+            l.discord_user_id.includes(term) || 
+            (l.roblox_username && l.roblox_username.includes(term))
+          )
+          .map((l) => ({
+            discord_user_id: l.discord_user_id,
+            roblox_user_id: l.roblox_user_id,
+            roblox_username: l.roblox_username,
+            verification_rank: l.verification_rank,
+            verified_at: l.verified_at,
+          })) ?? []];
+      }
+      // Simple lookup by discord_user_id
       return [this.store.robloxLinks?.filter((l) => l.discord_user_id === params[0]) ?? []];
     }
 
@@ -318,6 +349,16 @@ class FakeMysqlPool {
     if (/FROM site_users/i.test(sql)) {
       const rows = this.store.siteUsers.filter((u) => u.discord_user_id === params[0]);
       return [rows.map((row) => ({ ...row }))];
+    }
+
+    // ------------------------------------------------- strikes (sanctions)
+    if (/FROM strikes/i.test(sql)) {
+      return [this.store.strikes?.filter((s) => s.discord_id === params[0]) ?? []];
+    }
+
+    // ------------------------------------------------- cases (sanctions)
+    if (/FROM cases/i.test(sql)) {
+      return [this.store.cases?.filter((c) => c.discord_id === params[0]) ?? []];
     }
 
     throw new Error(`FakeMysqlPool: unsupported statement -> ${sql}`);

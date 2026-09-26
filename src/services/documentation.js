@@ -9,10 +9,16 @@ export const DOC_BLOCK_TYPES = Object.freeze({
 
 export const DOC_BLOCK_TYPE_VALUES = Object.freeze(Object.values(DOC_BLOCK_TYPES));
 
-const initializedPools = new WeakMap();
+const initializedPools = new Map();
+
+function getPoolKey(pool) {
+  const config = pool.config || pool._config || {};
+  return `${config.host}:${config.database}`;
+}
 
 export async function ensureDocumentationTables(pool) {
-  let initialization = initializedPools.get(pool);
+  const poolKey = getPoolKey(pool);
+  let initialization = initializedPools.get(poolKey);
   if (!initialization) {
     initialization = pool.execute(`
       CREATE TABLE IF NOT EXISTS documentation_blocks (
@@ -27,10 +33,10 @@ export async function ensureDocumentationTables(pool) {
         INDEX documentation_blocks_position_idx (position)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `).catch((error) => {
-      initializedPools.delete(pool);
+      initializedPools.delete(poolKey);
       throw error;
     });
-    initializedPools.set(pool, initialization);
+    initializedPools.set(poolKey, initialization);
   }
   return initialization;
 }

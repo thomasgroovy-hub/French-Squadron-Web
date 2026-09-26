@@ -19,7 +19,7 @@ import {
  */
 function recordingPool({ rows = () => [], affectedRows = 1, insertId = 1 } = {}) {
   const statements = [];
-  return {
+  const pool = {
     statements,
     execute: async (query, params = []) => {
       const sql = query.replace(/\s+/g, ' ').trim();
@@ -28,7 +28,17 @@ function recordingPool({ rows = () => [], affectedRows = 1, insertId = 1 } = {})
       if (/^\s*SELECT/i.test(sql)) return [rows(sql, params)];
       return [{ affectedRows, insertId }];
     },
+    getConnection: () => {
+      return {
+        execute: pool.execute,
+        beginTransaction: async () => {},
+        commit: async () => {},
+        rollback: async () => {},
+        release: () => {},
+      };
+    },
   };
+  return pool;
 }
 
 const findStatement = (pool, pattern) => pool.statements.find((entry) => pattern.test(entry.sql));
@@ -125,7 +135,8 @@ test('updateForm appends brand new questions and keeps the existing ones', async
 });
 
 test('publish cooldown is per creator and counts down from the last publication', async () => {
-  const pool = recordingPool({ rows: () => [{ last_published_at: new Date(), minutes_since: 10 }] });
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+  const pool = recordingPool({ rows: () => [{ last_published_at: tenMinutesAgo }] });
   const remaining = await getPublishCooldownRemaining('manager-1', 30, pool);
 
   assert.equal(remaining, 20);

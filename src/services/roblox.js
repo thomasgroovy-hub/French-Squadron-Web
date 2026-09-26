@@ -4,11 +4,22 @@ import { formatAccountAge, formatDate } from './discord.js';
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const profileCache = new Map();
 
+let sitePoolInstance = null;
+function getSitePool() {
+  if (sitePoolInstance) return sitePoolInstance;
+  try {
+    sitePoolInstance = getSiteDatabasePool();
+  } catch {
+    sitePoolInstance = false;
+  }
+  return sitePoolInstance || null;
+}
+
 /**
  * Searches for a linked Roblox account for a given Discord user ID in MySQL.
  * Uses the site's database pool to read from the mirrored roblox_links table.
  */
-async function getRobloxLink(discordUserId, { pool = getDatabasePool(), sitePool = getSiteDatabasePool() } = {}) {
+async function getRobloxLink(discordUserId, { pool = getDatabasePool(), sitePool = getSitePool() } = {}) {
   // Prefer site pool for reading mirror table, fallback to main pool
   const readPool = sitePool || pool;
   if (!readPool || !discordUserId) return null;
@@ -80,7 +91,7 @@ async function fetchRobloxAvatar(robloxUserId, fetchFn = fetch) {
 /**
  * Aggregates linked Roblox information with rich profile and avatar data.
  */
-export async function getLinkedRobloxData(discordUserId, { pool = getDatabasePool(), sitePool = getSiteDatabasePool(), fetchFn = fetch } = {}) {
+export async function getLinkedRobloxData(discordUserId, { pool = getDatabasePool(), sitePool = getSitePool(), fetchFn = fetch } = {}) {
   const link = await getRobloxLink(discordUserId, { pool, sitePool });
   if (!link) {
     return {
