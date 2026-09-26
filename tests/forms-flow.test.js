@@ -134,6 +134,35 @@ test('parcours complet : créer, publier, remplir, puis accepter une candidature
     const replay = await app.post(`/reponses/${responseId}/accepter`, {});
     assert.equal(replay.status, 409, 'une candidature déjà traitée est refusée');
     assert.equal(app.pool.store.formResponses.length, 1);
+
+    // 7. Une candidature acceptée est définitive : le membre ne peut plus
+    // répondre à ce formulaire, même si sa candidature n'est plus "pending".
+    const blockedForm = await app.get(`/candidatures/${formId}`, CANDIDATE);
+    assert.equal(blockedForm.status, 200);
+    const blockedHtml = await blockedForm.text();
+    assert.match(blockedHtml, /a été acceptée sur ce formulaire/);
+    assert.doesNotMatch(blockedHtml, new RegExp(`name="answer_${questions[0].id}"`), 'le formulaire ne doit plus être rendu');
+
+    const blockedSubmit = await app.post(`/candidatures/${formId}/reponses`, {
+      [`answer_${questions[0].id}`]: 'Je confirme ma candidature',
+      [`answer_${questions[1].id}`]: 'Encore disponible',
+    }, CANDIDATE);
+    assert.equal(blockedSubmit.status, 409, 'une candidature acceptée bloque la soumission');
+    assert.equal(app.pool.store.formResponses.length, 1, 'aucune candidature créée après acceptation');
+
+    const blockedList = await app.get('/candidatures', CANDIDATE);
+    assert.equal(blockedList.status, 200);
+    const listHtml = await blockedList.text();
+    assert.match(listHtml, /Acceptée/);
+    assert.doesNotMatch(listHtml, new RegExp(`href="/candidatures/${formId}"`), 'le bouton Postuler a disparu');
+
+    // Le blocage est propre au candidat : le recruteur, qui n'est pas
+    // applicant, continue de voir le formulaire et son lien.
+    const managerList = await app.get('/candidatures', RECRUITER);
+    assert.equal(managerList.status, 200);
+    const managerHtml = await managerList.text();
+    assert.match(managerHtml, /Recrutement pilote FSU/);
+    assert.match(managerHtml, new RegExp(`href="/candidatures/${formId}"`));
   } finally {
     app.close();
   }

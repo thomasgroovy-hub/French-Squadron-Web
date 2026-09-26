@@ -187,15 +187,18 @@ test('submitResponse stores answers keyed by question id', async () => {
 });
 
 test('submitResponse refuses a second candidature while one is pending', async () => {
+  const pendingRow = {
+    id: 42,
+    form_id: 5,
+    applicant_discord_id: 'applicant-1',
+    status: RESPONSE_STATUS.PENDING,
+    answers: { 11: 'Déjà envoyé' },
+    created_at: new Date('2026-01-01T00:00:00Z'),
+  };
+  // The status is a bound parameter (third one), so the fake has to answer
+  // per status instead of replaying one row for every SELECT.
   const pool = recordingPool({
-    rows: () => [{
-      id: 42,
-      form_id: 5,
-      applicant_discord_id: 'applicant-1',
-      status: RESPONSE_STATUS.PENDING,
-      answers: { 11: 'Déjà envoyé' },
-      created_at: new Date('2026-01-01T00:00:00Z'),
-    }],
+    rows: (sql, params) => (params?.[2] === RESPONSE_STATUS.ACCEPTED ? [] : [pendingRow]),
   });
 
   const outcome = await submitResponse({
@@ -208,6 +211,61 @@ test('submitResponse refuses a second candidature while one is pending', async (
   assert.equal(outcome.error, 'pending');
   assert.equal(outcome.response.id, 42);
   assert.equal(findStatement(pool, /INSERT INTO form_responses/), undefined, 'nothing is inserted');
+});
+
+test('submitResponse refuses any new candidature once one is accepted', async () => {
+  const acceptedRow = {
+    id: 77,
+    form_id: 5,
+    applicant_discord_id: 'applicant-1',
+    status: RESPONSE_STATUS.ACCEPTED,
+    answers: { 11: 'Déjà accepté' },
+    created_at: new Date('2026-01-01T00:00:00Z'),
+  };
+  const pool = recordingPool({
+    rows: (sql, params) => (params?.[2] === RESPONSE_STATUS.ACCEPTED ? [acceptedRow] : []),
+  });
+
+  const outcome = await submitResponse({
+    formId: 5,
+    applicantDiscordId: 'applicant-1',
+    answers: { 11: 'Encore' },
+    pool,
+  });
+
+  assert.equal(outcome.error, 'accepted', 'an accepted candidature is final');
+  assert.equal(outcome.response.id, 77);
+  assert.equal(findStatement(pool, /INSERT INTO form_responses/), undefined, 'nothing is inserted');
+});
+
+test('submitResponse locks the accepted rows before the pending ones', async () => {
+  // The FOR UPDATE guards only run when the pool hands out a dedicated
+  // connection, so this fake needs getConnection like mysql2's pool.
+  const statements = [];
+  const connection = {
+    beginTransaction: async () => {},
+    execute: async (query, params = []) => {
+      const sql = query.replace(/\s+/g, ' ').trim();
+      statements.push({ sql, params });
+      if (/^\s*SELECT/i.test(sql)) return [[]];
+      return [{ affectedRows: 1, insertId: 1 }];
+    },
+    commit: async () => {},
+    rollback: async () => {},
+    release: () => {},
+  };
+  const pool = {
+    statements,
+    getConnection: async () => connection,
+    execute: async () => [[]],
+  };
+
+  await submitResponse({ formId: 5, applicantDiscordId: 'applicant-1', answers: {}, pool });
+
+  const locks = statements.filter((entry) => /FOR UPDATE/.test(entry.sql));
+  assert.equal(locks.length, 2, 'both statuses are locked');
+  assert.equal(locks[0].params[2], RESPONSE_STATUS.ACCEPTED, 'accepted is locked first');
+  assert.equal(locks[1].params[2], RESPONSE_STATUS.PENDING);
 });
 
 test('listing responses filters on the form owner in SQL, not in the view', async () => {

@@ -1,3 +1,7 @@
+<%
+  const acceptedForms = typeof acceptedFormIds !== 'undefined' ? acceptedFormIds : new Set();
+  const submittedForms = typeof submittedFormIds !== 'undefined' ? submittedFormIds : new Set();
+%>
 <section class="card">
   <p class="eyebrow">Candidatures</p>
   <h1 style="font-size: 1.8rem; margin: 0.35rem 0;">Formulaires ouverts</h1>
@@ -62,10 +66,15 @@
             <% } %>
           </div>
           <div class="row-aside">
-            <% if (submittedFormIds.has(form.id)) { %>
-              <span class="badge badge-warning">Candidature envoyée</span>
+            <% if (acceptedForms.has(form.id)) { %>
+              <span class="badge badge-success">Acceptée</span>
+              <span class="btn btn-outline btn-sm" aria-disabled="true" style="opacity: 0.5; pointer-events: none;">Postulé</span>
+            <% } else { %>
+              <% if (submittedForms.has(form.id)) { %>
+                <span class="badge badge-warning">Candidature envoyée</span>
+              <% } %>
+              <a href="/candidatures/<%= form.id %>" class="btn btn-outline btn-sm"><%= submittedForms.has(form.id) ? 'Voir' : 'Postuler' %></a>
             <% } %>
-            <a href="/candidatures/<%= form.id %>" class="btn btn-outline btn-sm"><%= submittedFormIds.has(form.id) ? 'Voir' : 'Postuler' %></a>
           </div>
         </article>
       <% }); %>

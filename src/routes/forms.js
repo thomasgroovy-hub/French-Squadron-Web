@@ -10,6 +10,7 @@ import {
   countResponsesByCreator,
   createForm,
   ensureFormsTables,
+  findAcceptedResponse,
   findPendingResponse,
   getFormById,
   getPublishCooldownRemaining,
@@ -201,14 +202,15 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         listPublishedForms(pool),
         listFormsByCreator(userId, pool),
       ]);
-      const pendingByForm = await Promise.all(
-        forms.map(async (form) => ({
-          formId: form.id,
-          pending: await findPendingResponse(form.id, userId, pool),
-        })),
+      const statusByForm = await Promise.all(
+        forms.map(async (form) => {
+          const accepted = await findAcceptedResponse(form.id, userId, pool);
+          const pending = accepted ? null : await findPendingResponse(form.id, userId, pool);
+          return { formId: form.id, accepted, pending };
+        }),
       );
 
-      const pendingMap = new Map(pendingByForm.map((entry) => [entry.formId, entry.pending]));
+      const statusMap = new Map(statusByForm.map((entry) => [entry.formId, entry]));
       const isFormManager = hasFormsRole(req.memberData);
 
       res.render('forms', {
@@ -219,7 +221,12 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         justSubmitted: req.query.envoyee === '1',
         submittedFormIds: new Set(
           forms
-            .filter((form) => pendingMap.get(form.id))
+            .filter((form) => statusMap.get(form.id)?.pending)
+            .map((form) => form.id),
+        ),
+        acceptedFormIds: new Set(
+          forms
+            .filter((form) => statusMap.get(form.id)?.accepted)
             .map((form) => form.id),
         ),
       });
@@ -244,6 +251,20 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
       }
 
       const userId = req.session.user.id;
+
+      // An accepted candidature is final: the member is already in and must
+      // not answer the same form again, whatever they do with the form.
+      const accepted = await findAcceptedResponse(formId, userId, pool);
+      if (accepted) {
+        return res.status(409).render('form-fill', {
+          title: `${form.title} | Candidatures`,
+          form: describeForm(form),
+          alreadySubmitted: true,
+          alreadyAccepted: true,
+          error: 'Votre candidature a déjà été acceptée sur ce formulaire.',
+        });
+      }
+
       const existing = await findPendingResponse(formId, userId, pool);
       if (existing) {
         return res.status(409).render('form-fill', {
@@ -277,6 +298,16 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         answers,
         pool,
       });
+
+      if (result?.error === 'accepted') {
+        return res.status(409).render('form-fill', {
+          title: `${form.title} | Candidatures`,
+          form: describeForm(form),
+          alreadySubmitted: true,
+          alreadyAccepted: true,
+          error: 'Votre candidature a déjà été acceptée sur ce formulaire.',
+        });
+      }
 
       if (result?.error === 'pending') {
         return res.status(409).render('form-fill', {
@@ -424,6 +455,18 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         return res.status(404).render('error', {
           title: 'Formulaire indisponible',
           message: 'Ce formulaire n’est pas ouvert aux candidatures.',
+        });
+      }
+
+      const accepted = await findAcceptedResponse(formId, userId, pool);
+      if (accepted) {
+        return res.render('form-fill', {
+          title: `${form.title} | Candidatures`,
+          form: formView,
+          answers: {},
+          alreadySubmitted: true,
+          alreadyAccepted: true,
+          error: null,
         });
       }
 

@@ -8,11 +8,24 @@
   <% } %>
 </section>
 
+<%
+  const accepted = typeof alreadyAccepted !== 'undefined' ? alreadyAccepted : false;
+  const pending = typeof alreadySubmitted !== 'undefined' ? alreadySubmitted : false;
+%>
 <% if (error) { %>
   <div class="notice notice-danger" style="margin-top: 1rem;"><%= error %></div>
 <% } %>
 
-<% if (alreadySubmitted) { %>
+<% if (accepted) { %>
+  <section class="card" style="margin-top: 1rem;">
+    <div class="empty-state">
+      <span class="empty-state-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 6.5 9.4 17.1 4 11.7"/></svg>
+      </span>
+      <p>Votre candidature a été acceptée sur ce formulaire. Vous ne pouvez donc plus y répondre.</p>
+    </div>
+  </section>
+<% } else if (pending) { %>
   <section class="card" style="margin-top: 1rem;">
     <div class="empty-state">
       <span class="empty-state-icon" aria-hidden="true">

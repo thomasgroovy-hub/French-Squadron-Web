@@ -361,6 +361,26 @@ export async function findPendingResponse(formId, applicantDiscordId, pool = get
   }
 }
 
+/**
+ * The applicant's accepted candidature on a form, if any. An accepted
+ * candidature is final: the member is already in, so they must not be able to
+ * send another answer on the same form.
+ */
+export async function findAcceptedResponse(formId, applicantDiscordId, pool = getDatabasePool()) {
+  if (!pool || !formId || !applicantDiscordId) return null;
+  try {
+    await ensureFormsTables(pool);
+    const [rows] = await pool.execute(
+      'SELECT * FROM form_responses WHERE form_id = ? AND applicant_discord_id = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
+      [formId, applicantDiscordId, RESPONSE_STATUS.ACCEPTED],
+    );
+    return mapResponse(rows[0]);
+  } catch (error) {
+    console.error(`[FormsService] Unable to check accepted response for ${applicantDiscordId}:`, error.message);
+    return null;
+  }
+}
+
 export async function submitResponse({
   formId,
   applicantDiscordId,
@@ -374,15 +394,31 @@ export async function submitResponse({
     if (connection) await connection.beginTransaction();
 
     // Serialises concurrent submissions from the same applicant so two clicks
-    // cannot both pass the "one pending candidature" check.
+    // cannot both pass the "one pending candidature" check. The accepted rows
+    // are locked first: a member already accepted must stay blocked even if a
+    // second request lands at the same moment.
     if (connection) {
+      await connection.execute(
+        'SELECT id FROM form_responses WHERE form_id = ? AND applicant_discord_id = ? AND status = ? LIMIT 1 FOR UPDATE',
+        [formId, applicantDiscordId, RESPONSE_STATUS.ACCEPTED],
+      );
       await connection.execute(
         'SELECT id FROM form_responses WHERE form_id = ? AND applicant_discord_id = ? AND status = ? LIMIT 1 FOR UPDATE',
         [formId, applicantDiscordId, RESPONSE_STATUS.PENDING],
       );
     }
 
-    const [pendingRows] = await (connection || pool).execute(
+    const executor = connection || pool;
+    const [acceptedRows] = await executor.execute(
+      'SELECT id FROM form_responses WHERE form_id = ? AND applicant_discord_id = ? AND status = ? LIMIT 1',
+      [formId, applicantDiscordId, RESPONSE_STATUS.ACCEPTED],
+    );
+    if (acceptedRows.length) {
+      if (connection) await connection.rollback();
+      return { error: 'accepted', response: mapResponse(acceptedRows[0]) };
+    }
+
+    const [pendingRows] = await executor.execute(
       'SELECT id FROM form_responses WHERE form_id = ? AND applicant_discord_id = ? AND status = ? LIMIT 1',
       [formId, applicantDiscordId, RESPONSE_STATUS.PENDING],
     );
@@ -391,7 +427,6 @@ export async function submitResponse({
       return { error: 'pending', response: mapResponse(pendingRows[0]) };
     }
 
-    const executor = connection || pool;
     const [result] = await executor.execute(
       'INSERT INTO form_responses (form_id, applicant_discord_id, status, answers) VALUES (?, ?, ?, ?)',
       [formId, applicantDiscordId, RESPONSE_STATUS.PENDING, JSON.stringify(answers)],
