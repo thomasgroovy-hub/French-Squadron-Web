@@ -55,7 +55,7 @@ export async function fetchSiteUsers(search = '', pool = getDatabasePool()) {
       `SELECT users.discord_user_id, users.discord_username, users.global_name,
               users.avatar_url, users.last_login, links.roblox_username
        FROM site_users AS users
-       LEFT JOIN roblox_discord_links AS links
+       LEFT JOIN roblox_links AS links
          ON links.discord_user_id = users.discord_user_id
        WHERE ? = '%%'
           OR users.discord_username LIKE ?
@@ -79,7 +79,7 @@ export async function fetchSiteUser(discordUserId, pool = getDatabasePool()) {
       `SELECT users.discord_user_id, users.discord_username, users.global_name,
               users.avatar_url, users.last_login, links.roblox_username
        FROM site_users AS users
-       LEFT JOIN roblox_discord_links AS links
+       LEFT JOIN roblox_links AS links
          ON links.discord_user_id = users.discord_user_id
        WHERE users.discord_user_id = ?
        LIMIT 1`,
