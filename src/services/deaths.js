@@ -51,6 +51,8 @@ export async function recordDeath({
   }
 }
 
+export { ensurePermadeathDeathsTable };
+
 export async function fetchMemberDeaths(discordUserId, pool = getDatabasePool()) {
   if (!pool || !discordUserId) return [];
   try {

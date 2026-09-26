@@ -9,6 +9,17 @@ import { createMainRouter } from './routes/index.js';
 
 import { getDatabasePool, getSiteDatabasePool } from './database.js';
 
+/**
+ * Wrapper pour intercepter les erreurs asynchrones dans les routes Express.
+ * Sans cela, les exceptions dans les handlers async ne sont pas catchées
+ * par le middleware d'erreur Express 4 et font crasher le process (502).
+ */
+function asyncHandler(fn) {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -96,6 +107,16 @@ export function startWebServer({
       `[WebServer] Warning: Missing environment variables: ${missing.join(', ')}. Some OAuth features will be unavailable until set.`
     );
   }
+
+  // Gestionnaires globaux pour éviter les crashs silencieux (502)
+  process.on('uncaughtException', (err) => {
+    console.error('[WebServer] UNCAUGHT EXCEPTION:', err);
+    // Ne pas exit(1) pour éviter le redémarrage en boucle sur Render
+  });
+
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error('[WebServer] UNHANDLED REJECTION at:', promise, 'reason:', reason);
+  });
 
   const app = createApp({ pool, sitePool });
   const server = app.listen(port, () => {
