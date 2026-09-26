@@ -1,0 +1,34 @@
+<section class="card">
+  <p class="eyebrow">Espace staff</p>
+  <h1 style="font-size: 1.8rem; margin: 0.35rem 0;">Supervision des membres</h1>
+  <p class="muted">Comptes ayant déjà ouvert une session sur le portail.</p>
+</section>
+
+<section style="margin-top: 1rem;">
+  <form action="/members" method="get" class="member-tools">
+    <input type="search" name="q" value="<%= search %>" placeholder="Discord ou Roblox" aria-label="Rechercher un pseudo Discord ou Roblox">
+    <button type="submit" class="btn btn-outline">Rechercher</button>
+  </form>
+
+  <% if (users.length) { %>
+    <div class="member-list">
+      <% users.forEach((member) => { %>
+        <a class="member-row" href="/members/<%= member.discord_user_id %>">
+          <span class="member-identity">
+            <img class="member-avatar" src="<%= member.avatar_url %>" alt="">
+            <span><strong><%= member.global_name %></strong><br><span class="muted">@<%= member.discord_username %></span></span>
+          </span>
+          <span class="member-roblox"><span class="data-label">Roblox</span><%= member.roblox_username || 'Non lié' %></span>
+          <span class="member-grades"><span class="data-label">Grade(s)</span>
+            <% if (member.grades.length) { %>
+              <span class="tag-list"><% member.grades.forEach((grade) => { %><span class="role-tag"><%= grade %></span><% }); %></span>
+            <% } else { %><span class="muted">Aucun</span><% } %>
+          </span>
+          <span class="muted" style="font-size: 0.8rem;">Dernière connexion<br><%= member.last_login ? new Date(member.last_login).toLocaleDateString('fr-FR') : 'Inconnue' %></span>
+        </a>
+      <% }); %>
+    </div>
+  <% } else { %>
+    <div class="card"><p class="muted">Aucun membre ne correspond à cette recherche.</p></div>
+  <% } %>
+</section>

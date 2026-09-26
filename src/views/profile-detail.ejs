@@ -1,0 +1,192 @@
+<%
+  const CASE_LABELS = { exclusion: 'Exclusion', bannissement: 'Bannissement', expulsion: 'Expulsion' };
+  const CASE_TONES = { exclusion: 'warning', bannissement: 'danger', expulsion: 'danger' };
+  const robloxLinked = Boolean(roblox && roblox.isLinked && roblox.data);
+
+  const sanctionEntries = [];
+  if (sanctions) {
+    for (const strike of sanctions.strikes) {
+      sanctionEntries.push({
+        title: `Avertissement n°${strike.id}`,
+        reason: strike.reason,
+        date: strike.formattedDate,
+        pill: 'Avertissement',
+        tone: 'warning',
+      });
+    }
+    for (const item of sanctions.cases) {
+      const label = CASE_LABELS[item.type] || item.type;
+      sanctionEntries.push({
+        title: label,
+        reason: item.reason,
+        date: item.formattedDate,
+        pill: label,
+        tone: CASE_TONES[item.type] || 'warning',
+      });
+    }
+    for (const ban of sanctions.bans) {
+      sanctionEntries.push({
+        title: `Bannissement · ${ban.guildName}`,
+        reason: 'Bannissement global',
+        date: ban.formattedDate,
+        pill: 'Bannissement',
+        tone: 'danger',
+      });
+    }
+  }
+%>
+<div style="display: grid; gap: 1.25rem;">
+  <% if (isStaffView) { %>
+    <a href="/members" class="btn btn-outline btn-sm" style="width: fit-content;">Retour à la supervision</a>
+  <% } %>
+
+  <section class="card">
+    <div class="profile-identity">
+      <img class="profile-avatar" src="<%= discordInfo.avatarUrl %>" alt="Avatar Discord de <%= discordInfo.username %>">
+      <div class="profile-identity-text">
+        <% if (isStaffView) { %>
+          <p class="eyebrow">Fiche membre en lecture seule</p>
+        <% } %>
+        <h1 class="profile-name"><%= discordInfo.globalName %></h1>
+        <p class="profile-handle">@<%= discordInfo.username %></p>
+        <% if (memberData.nickname) { %>
+          <p class="profile-meta">Surnom sur le serveur : <%= memberData.nickname %></p>
+        <% } %>
+        <div class="pill-row">
+          <span class="pill">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l7 3v5.5c0 4.3-2.9 8.2-7 9.5-4.1-1.3-7-5.2-7-9.5V6z"/></svg>
+            <%= primaryGrade ? primaryGrade.label : 'Aucun grade' %>
+          </span>
+          <span class="pill">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16v13H4z"/><circle cx="8.5" cy="12" r="1.4"/><path d="M4 16.5c.6-1.6 2.2-2.4 4.5-2.4s3.9.8 4.5 2.4"/></svg>
+            ID <span class="pill-mono"><%= discordInfo.id %></span>
+          </span>
+          <span class="pill">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.5l2.4 2.4 4.6-5"/></svg>
+            <%= memberData.inGuild ? 'Membre du serveur' : 'Hors du serveur' %>
+          </span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="profile-columns">
+    <div class="profile-col">
+      <section class="card">
+        <div class="section-head">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 20V9l8-5 8 5v11"/><path d="M9.5 20v-6h5v6"/></svg>
+          <h2>Grades</h2>
+        </div>
+        <% if (grades.length) { %>
+          <div class="row-list">
+            <% grades.forEach((grade) => { %>
+              <article class="data-row">
+                <span class="row-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16v13H4z"/><circle cx="8.5" cy="12" r="1.4"/><path d="M4 16.5c.6-1.6 2.2-2.4 4.5-2.4s3.9.8 4.5 2.4"/></svg>
+                </span>
+                <div class="row-body">
+                  <div class="row-title"><%= grade.label %></div>
+                  <% if (grade.roleName) { %>
+                    <div class="row-subtitle">[<%= grade.roleName %>]</div>
+                  <% } %>
+                </div>
+              </article>
+            <% }); %>
+          </div>
+        <% } else { %>
+          <div class="empty-state">
+            <span class="empty-state-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16v13H4z"/><circle cx="8.5" cy="12" r="1.4"/><path d="M4 16.5c.6-1.6 2.2-2.4 4.5-2.4s3.9.8 4.5 2.4"/></svg>
+            </span>
+            <p>Aucun élément pour l’instant</p>
+          </div>
+        <% } %>
+      </section>
+
+      <% if (hasTargetRole || isStaffView) { %>
+        <section class="card">
+          <div class="section-head">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 4v16"/><path d="M5.5 8.5h13"/><path d="M7.5 8.5L5 15h5z"/><path d="M16.5 8.5L14 15h5z"/></svg>
+            <h2>Historique des sanctions</h2>
+            <span class="row-aside"><span class="badge badge-cyan"><%= sanctionEntries.length %></span></span>
+          </div>
+          <% if (sanctionEntries.length) { %>
+            <div class="row-list">
+              <% sanctionEntries.forEach((entry) => { %>
+                <article class="data-row">
+                  <span class="row-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5"/><path d="M12 16h.01"/></svg>
+                  </span>
+                  <div class="row-body">
+                    <div class="row-title"><%= entry.title %></div>
+                    <div class="row-subtitle"><%= entry.reason %></div>
+                  </div>
+                  <div class="row-aside">
+                    <span class="badge badge-<%= entry.tone %>"><%= entry.pill %></span>
+                    <span class="row-date"><%= entry.date %></span>
+                  </div>
+                </article>
+              <% }); %>
+            </div>
+          <% } else { %>
+            <div class="empty-state">
+              <span class="empty-state-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.5l2.4 2.4 4.6-5"/></svg>
+              </span>
+              <p>Aucune sanction enregistrée</p>
+            </div>
+          <% } %>
+        </section>
+      <% } else { %>
+        <section class="card">
+          <div class="section-head">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5"/></svg>
+            <h2>Sanctions non affichées</h2>
+          </div>
+          <p class="muted">L’historique des sanctions de cette fiche est réservé aux membres possédant le rôle de supervision.</p>
+        </section>
+      <% } %>
+    </div>
+
+    <div class="profile-col">
+      <section class="card">
+        <div class="section-head">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9.5 14.5l5-5"/><path d="M10.5 6.5l1.2-1.2a4 4 0 015.7 5.7l-1.2 1.2"/><path d="M13.5 17.5l-1.2 1.2a4 4 0 01-5.7-5.7l1.2-1.2"/></svg>
+          <h2>Connexions</h2>
+        </div>
+        <div class="row-list">
+          <article class="data-row">
+            <span class="row-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.3 5.3A16 16 0 0015.1 4l-.2.4a12 12 0 013.6 1.8 15 15 0 00-12.9 0A12 12 0 009.1 4.4L8.9 4a16 16 0 00-4.2 1.3C2 9.2 1.3 13 1.6 16.7A16 16 0 006.7 19l1-1.4a10 10 0 01-1.6-.8l.4-.3a11.4 11.4 0 0010 0l.4.3a10 10 0 01-1.6.8l1 1.4a16 16 0 005.1-2.3c.4-4.3-.7-8-2.1-11.4zM8.3 14.6c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2zm7.4 0c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2z"/></svg>
+            </span>
+            <div class="row-body">
+              <div class="row-title">Discord</div>
+              <div class="row-subtitle"><%= discordInfo.username %></div>
+              <div class="row-subtitle">Compte créé le <%= discordInfo.formattedCreatedAt %></div>
+            </div>
+          </article>
+
+          <article class="data-row">
+            <span class="row-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.6 2h10.8L21 5.6v12.8L17.4 22H6.6L3 18.4V5.6zm1.2 1.5L4.5 6.8v10.4l3.3 3.3h9.4l3.3-3.3V6.8l-3.3-3.3zM8.2 8h7.6v1.9h-2.6v6.2h-2.4V9.9H8.2z"/></svg>
+            </span>
+            <div class="row-body">
+              <div class="row-title">Roblox</div>
+              <% if (robloxLinked) { %>
+                <div class="row-subtitle"><%= roblox.data.username %></div>
+                <div class="row-subtitle">
+                  <% if (roblox.data.rank) { %>Rang de vérification #<%= roblox.data.rank %> · <% } %>Compte créé le <%= roblox.data.formattedCreatedAt %>
+                </div>
+              <% } else { %>
+                <div class="row-subtitle">Non lié</div>
+                <% if (!isStaffView) { %>
+                  <div class="row-subtitle">Utilisez la commande <code>/verification-panel</code> sur le serveur pour lier votre compte.</div>
+                <% } %>
+              <% } %>
+            </div>
+          </article>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>

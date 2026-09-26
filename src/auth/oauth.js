@@ -1,8 +1,10 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { webConfig } from '../config.js';
+import { recordSiteLogin } from '../services/members.js';
+import { getDatabasePool } from '../database.js';
 
-export function createOAuthRouter({ config = webConfig, fetchFn = fetch } = {}) {
+export function createOAuthRouter({ config = webConfig, fetchFn = fetch, pool = getDatabasePool() } = {}) {
   const router = Router();
 
   router.get('/discord', (req, res) => {
@@ -106,17 +108,17 @@ export function createOAuthRouter({ config = webConfig, fetchFn = fetch } = {}) 
         : `https://cdn.discordapp.com/embed/avatars/${(BigInt(discordUser.id) >> 22n) % 6n}.png`;
 
       // 3. Stockage en session sécurisée
-      req.setSession({
-        user: {
-          id: discordUser.id,
-          username: discordUser.username,
-          globalName: discordUser.global_name || discordUser.username,
-          avatar: discordUser.avatar,
-          avatarUrl,
-        },
-      });
+      const sessionUser = {
+        id: discordUser.id,
+        username: discordUser.username,
+        globalName: discordUser.global_name || discordUser.username,
+        avatar: discordUser.avatar,
+        avatarUrl,
+      };
+      req.setSession({ user: sessionUser });
+      await recordSiteLogin(sessionUser, pool);
 
-      res.redirect('/profile');
+      res.redirect('/');
     } catch (err) {
       console.error('[OAuth2] Authentication error:', err);
       res.status(500).render('error', {

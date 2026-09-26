@@ -1,0 +1,76 @@
+<section class="card">
+  <p class="eyebrow">Candidatures</p>
+  <h1 style="font-size: 1.8rem; margin: 0.35rem 0;">Formulaires ouverts</h1>
+  <p class="muted">Remplissez le formulaire d’un poste pour envoyer votre candidature à l’équipe.</p>
+</section>
+
+<% if (justSubmitted) { %>
+  <div class="notice notice-success" style="margin-top: 1rem;">Votre candidature a bien été envoyée. Elle est désormais en attente de traitement.</div>
+<% } %>
+
+<% if (isFormManager) { %>
+  <section class="card" style="margin-top: 1rem;">
+    <div class="section-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      <h2>Gestion des formulaires</h2>
+      <span class="row-aside"><a href="/candidatures/nouveau" class="btn btn-discord btn-sm">Nouveau formulaire</a></span>
+    </div>
+    <% if (ownForms.length) { %>
+      <div class="row-list">
+        <% ownForms.forEach((form) => { %>
+          <article class="data-row">
+            <span class="row-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3.8h7l4 4V20H7z"/><path d="M14 4v4h4M10 13h5M10 16h5"/></svg>
+            </span>
+            <div class="row-body">
+              <div class="row-title"><%= form.title %></div>
+              <div class="row-subtitle">
+                <%= form.responseCount %> candidature<%= form.responseCount > 1 ? 's' : '' %>
+                <% if (form.pendingCount) { %>· <%= form.pendingCount %> en attente<% } %>
+              </div>
+            </div>
+            <div class="row-aside">
+              <span class="badge badge-<%= form.status === 'open' ? 'success' : (form.status === 'closed' ? 'danger' : 'warning') %>"><%= form.statusLabel %></span>
+              <a href="/candidatures/<%= form.id %>" class="btn btn-outline btn-sm">Gérer</a>
+            </div>
+          </article>
+        <% }); %>
+      </div>
+    <% } else { %>
+      <div class="empty-state">
+        <span class="empty-state-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3.8h7l4 4V20H7z"/><path d="M14 4v4h4"/></svg>
+        </span>
+        <p>Vous n’avez pas encore créé de formulaire.</p>
+      </div>
+    <% } %>
+  </section>
+<% } %>
+
+<section style="margin-top: 1rem;">
+  <% if (forms.length) { %>
+    <div class="row-list">
+      <% forms.forEach((form) => { %>
+        <article class="data-row">
+          <span class="row-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3.8h7l4 4V20H7z"/><path d="M14 4v4h4M10 13h5M10 16h5"/></svg>
+          </span>
+          <div class="row-body">
+            <div class="row-title"><%= form.title %></div>
+            <% if (form.description) { %>
+              <div class="row-subtitle"><%= form.description %></div>
+            <% } %>
+          </div>
+          <div class="row-aside">
+            <% if (submittedFormIds.has(form.id)) { %>
+              <span class="badge badge-warning">Candidature envoyée</span>
+            <% } %>
+            <a href="/candidatures/<%= form.id %>" class="btn btn-outline btn-sm"><%= submittedFormIds.has(form.id) ? 'Voir' : 'Postuler' %></a>
+          </div>
+        </article>
+      <% }); %>
+    </div>
+  <% } else { %>
+    <div class="card"><p class="muted">Aucun formulaire n’est ouvert aux candidatures pour le moment.</p></div>
+  <% } %>
+</section>

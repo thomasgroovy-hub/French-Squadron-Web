@@ -1,0 +1,85 @@
+<% if (!isConnected) { %>
+  <section class="card dashboard-hero">
+    <div>
+      <p class="eyebrow">Portail communautaire Site-66</p>
+      <h1 class="hero-title">Site-66</h1>
+      <p class="hero-note">Retrouvez votre identité Discord et Roblox, vos grades et les informations de votre compte lié.</p>
+      <a href="/auth/discord" class="btn btn-discord" style="margin-top: 1.4rem;">Connexion Discord</a>
+    </div>
+  </section>
+  <div class="dashboard-grid">
+    <div class="card">
+      <p class="eyebrow">Identité</p>
+      <h2 style="margin: 0.55rem 0;">Discord et Roblox</h2>
+      <p class="muted">La fiche réunit les informations Discord et le compte Roblox vérifié sur le serveur Site-66.</p>
+    </div>
+    <div class="card">
+      <p class="eyebrow">Communauté</p>
+      <h2 style="margin: 0.55rem 0;">Grades et accès</h2>
+      <p class="muted">Les grades affichés correspondent aux rôles présents sur votre compte Discord.</p>
+    </div>
+  </div>
+<% } else { %>
+  <% const linkedAccount = roblox && roblox.isLinked && roblox.data; %>
+  <% const greetingName = linkedAccount ? roblox.data.username : (currentUser.globalName || currentUser.username); %>
+  <% const greetingAvatar = linkedAccount ? roblox.data.avatarUrl : currentUser.avatarUrl; %>
+  <section class="card dashboard-hero">
+    <div class="hero-identity">
+      <img class="hero-avatar" src="<%= greetingAvatar %>" alt="Avatar de <%= greetingName %>">
+      <div>
+        <p class="eyebrow">Espace membre</p>
+        <h1 class="hero-title">Bonjour, <%= greetingName %></h1>
+        <% if (linkedAccount) { %>
+          <p class="hero-note">Votre compte Roblox est lié à Discord. Retrouvez votre fiche et les grades détectés sur votre profil.</p>
+        <% } else { %>
+          <p class="hero-note">Vous êtes connecté avec Discord. Aucun compte Roblox n’est encore lié à votre profil.</p>
+        <% } %>
+      </div>
+    </div>
+  </section>
+
+  <% if (!linkedAccount) { %>
+    <section class="card" style="margin-top: 1rem; border-color: var(--border-strong);">
+      <p class="eyebrow">Liaison Roblox</p>
+      <h2 style="margin: 0.4rem 0;">Associez votre compte Roblox</h2>
+      <p class="muted">Sur le serveur Discord Site-66, ouvrez le panneau publié avec la commande <code>/verification-panel</code>. Le bot vous donnera un code temporaire à placer dans la description de votre profil Roblox pour confirmer la liaison.</p>
+    </section>
+  <% } %>
+
+  <div class="dashboard-grid">
+    <a href="/profile" class="card shortcut">
+      <div>
+        <span class="shortcut-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.5-3.4 3.2-5.2 7-5.2s6.5 1.8 7 5.2"/></svg></span>
+        <h2 style="margin: 0.8rem 0 0.25rem;">Mon profil</h2>
+        <p class="muted">Identités, grades et historique accessible.</p>
+      </div>
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="20" height="20"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </a>
+    <a href="/candidatures" class="card shortcut">
+      <div>
+        <span class="shortcut-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3.8h7l4 4V20H7z"/><path d="M14 4v4h4M10 13h5M10 16h5"/></svg></span>
+        <h2 style="margin: 0.8rem 0 0.25rem;">Candidatures</h2>
+        <p class="muted">Remplissez les formulaires actuellement ouverts.</p>
+      </div>
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="20" height="20"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </a>
+    <a href="/documentation" class="card shortcut">
+      <div>
+        <span class="shortcut-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4.5h9l3.5 3.5V20H6z"/><path d="M15 4.5V8h3.5M9 12.5h6M9 16h6"/></svg></span>
+        <h2 style="margin: 0.8rem 0 0.25rem;">Documentation</h2>
+        <p class="muted">Règlements, procédures et informations de référence.</p>
+      </div>
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="20" height="20"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </a>
+    <% if (typeof isFormManager !== 'undefined' && isFormManager) { %>
+      <a href="/reponses" class="card shortcut">
+        <div>
+          <span class="shortcut-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5.5h14v10H9l-4 3.5z"/><path d="M9 9.5h6M9 12.5h4"/></svg></span>
+          <h2 style="margin: 0.8rem 0 0.25rem;">Réponses</h2>
+          <p class="muted">Traitez les candidatures reçues sur vos formulaires.</p>
+        </div>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="20" height="20"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </a>
+    <% } %>
+  </div>
+<% } %>

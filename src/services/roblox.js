@@ -7,7 +7,7 @@ const profileCache = new Map();
 /**
  * Searches for a linked Roblox account for a given Discord user ID in MySQL.
  */
-export async function getRobloxLink(discordUserId, pool = getDatabasePool()) {
+async function getRobloxLink(discordUserId, pool = getDatabasePool()) {
   if (!pool || !discordUserId) return null;
 
   try {
@@ -25,7 +25,7 @@ export async function getRobloxLink(discordUserId, pool = getDatabasePool()) {
 /**
  * Fetches Roblox profile data (username, created date, bio).
  */
-export async function fetchRobloxProfile(robloxUserId, fetchFn = fetch) {
+async function fetchRobloxProfile(robloxUserId, fetchFn = fetch) {
   const cached = profileCache.get(String(robloxUserId));
   if (cached && cached.expires > Date.now()) {
     return cached.data;
@@ -56,7 +56,7 @@ export async function fetchRobloxProfile(robloxUserId, fetchFn = fetch) {
 /**
  * Fetches Roblox avatar headshot thumbnail.
  */
-export async function fetchRobloxAvatar(robloxUserId, fetchFn = fetch) {
+async function fetchRobloxAvatar(robloxUserId, fetchFn = fetch) {
   try {
     const response = await fetchFn(
       `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${robloxUserId}&size=150x150&format=Png&isCircular=false`,

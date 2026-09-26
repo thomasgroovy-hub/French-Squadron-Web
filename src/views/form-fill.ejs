@@ -1,0 +1,50 @@
+<a href="/candidatures" class="btn btn-outline btn-sm" style="width: fit-content;">Retour aux candidatures</a>
+
+<section class="card" style="margin-top: 1rem;">
+  <p class="eyebrow">Formulaire</p>
+  <h1 style="font-size: 1.8rem; margin: 0.35rem 0;"><%= form.title %></h1>
+  <% if (form.description) { %>
+    <p class="muted" style="margin-top: 0.5rem;"><%= form.description %></p>
+  <% } %>
+</section>
+
+<% if (error) { %>
+  <div class="notice notice-danger" style="margin-top: 1rem;"><%= error %></div>
+<% } %>
+
+<% if (alreadySubmitted) { %>
+  <section class="card" style="margin-top: 1rem;">
+    <div class="empty-state">
+      <span class="empty-state-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5"/><path d="M12 16h.01"/></svg>
+      </span>
+      <p>Vous avez déjà une candidature en attente sur ce formulaire. Elle sera traitée par l’équipe avant toute nouvelle soumission.</p>
+    </div>
+  </section>
+<% } else { %>
+  <form action="/candidatures/<%= form.id %>/reponses" method="post" class="stack" style="margin-top: 1rem;">
+    <% form.questions.forEach((question, index) => { %>
+      <% const value = (answers && answers[String(question.id)]) || ''; %>
+      <section class="card">
+        <div class="question-head">
+          <span class="question-index"><%= index + 1 %></span>
+          <div>
+            <h2 class="question-label"><%= question.label %></h2>
+            <% if (question.helpText) { %>
+              <p class="question-help"><%= question.helpText %></p>
+            <% } %>
+          </div>
+        </div>
+        <% if (question.fieldType === 'long') { %>
+          <textarea class="field-input" name="answer_<%= question.id %>" rows="6" placeholder="Votre réponse"><%= value %></textarea>
+        <% } else { %>
+          <input class="field-input" type="text" name="answer_<%= question.id %>" value="<%= value %>" placeholder="Votre réponse" maxlength="4000">
+        <% } %>
+      </section>
+    <% }); %>
+
+    <div class="row-aside" style="justify-content: flex-end;">
+      <button type="submit" class="btn btn-discord">Envoyer ma candidature</button>
+    </div>
+  </form>
+<% } %>

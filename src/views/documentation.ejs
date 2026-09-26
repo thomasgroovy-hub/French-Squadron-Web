@@ -1,0 +1,126 @@
+<section class="card">
+  <p class="eyebrow">Documentation</p>
+  <h1 style="font-size: 1.8rem; margin: 0.35rem 0;">Documentation de l’escadrille</h1>
+  <p class="muted">Règlements, procédures et informations de référence.</p>
+</section>
+
+<% if (notice) { %>
+  <div class="notice notice-success" style="margin-top: 1rem;"><%= notice %></div>
+<% } %>
+<% if (error) { %>
+  <div class="notice notice-danger" style="margin-top: 1rem;"><%= error %></div>
+<% } %>
+
+<section class="card" style="margin-top: 1rem;">
+  <% if (blocks.length) { %>
+    <div class="doc-blocks">
+      <% blocks.forEach((block, index) => { %>
+        <article class="doc-block">
+          <% if (block.type === 'heading') { %>
+            <h2 class="doc-heading"><%= block.title %></h2>
+
+          <% } else if (block.type === 'text') { %>
+            <p class="doc-text"><%= block.content %></p>
+
+          <% } else if (block.type === 'link') { %>
+            <p class="doc-text">
+              <a class="doc-link" href="<%= block.url %>" rel="noopener noreferrer" target="_blank"><%= block.title || block.url %></a>
+            </p>
+
+          <% } else if (block.type === 'bullets') { %>
+            <ul class="doc-bullets">
+              <% block.items.forEach((item) => { %>
+                <li><%= item %></li>
+              <% }); %>
+            </ul>
+          <% } %>
+        </article>
+      <% }); %>
+    </div>
+  <% } else { %>
+    <div class="empty-state">
+      <span class="empty-state-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4.5h9l3.5 3.5V20H6z"/><path d="M15 4.5V8h3.5M9 12.5h6M9 16h6"/></svg>
+      </span>
+      <p><% if (isFormManager) { %>La documentation est vide. Ajoutez un premier bloc ci-dessous.<% } else { %>Aucun contenu n’a encore été publié.<% } %></p>
+    </div>
+  <% } %>
+</section>
+
+<% if (isFormManager) { %>
+  <section class="card" style="margin-top: 1rem;">
+    <div class="section-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      <h2>Ajouter un bloc</h2>
+    </div>
+
+    <form action="/documentation/blocs" method="post" class="stack">
+      <div class="field-block">
+        <label class="field-label" for="block-type">Type de bloc</label>
+        <select class="field-input" id="block-type" name="block_type">
+          <option value="text">Texte</option>
+          <option value="heading">Titre</option>
+          <option value="link">Lien</option>
+          <option value="bullets">Liste à puces</option>
+        </select>
+      </div>
+
+      <div class="field-block">
+        <label class="field-label" for="block-title">Libellé</label>
+        <p class="question-help">Obligatoire pour un titre, un lien ou une liste à puces.</p>
+        <input class="field-input" id="block-title" type="text" name="title" value="" maxlength="200" placeholder="Règlement intérieur">
+      </div>
+
+      <div class="field-block">
+        <label class="field-label" for="block-content">Contenu</label>
+        <p class="question-help">Pour une liste à puces, une ligne par élément.</p>
+        <textarea class="field-input" id="block-content" name="content" rows="5" maxlength="8000" placeholder="Texte du bloc…&#10;Règle 1&#10;Règle 2"></textarea>
+      </div>
+
+      <div class="field-block">
+        <label class="field-label" for="block-url">URL (blocs de type lien)</label>
+        <p class="question-help">Seuls les liens http:// et https:// sont acceptés.</p>
+        <input class="field-input" id="block-url" type="text" name="url" value="" maxlength="500" placeholder="https://discord.com/channels/…">
+      </div>
+
+      <div class="row-aside" style="justify-content: flex-end;">
+        <button type="submit" class="btn btn-discord">Ajouter le bloc</button>
+      </div>
+    </form>
+  </section>
+
+  <% if (blocks.length) { %>
+    <section class="card" style="margin-top: 1rem;">
+      <div class="section-head">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>
+        <h2>Réorganiser</h2>
+        <span class="row-aside muted">Les modifications sont enregistrées immédiatement.</span>
+      </div>
+
+      <div class="stack">
+        <% blocks.forEach((block, index) => { %>
+          <article class="builder-row">
+            <div class="builder-order">
+              <form action="/documentation/blocs/<%= block.id %>/deplacer" method="post">
+                <button type="submit" name="direction" value="up" class="icon-btn" title="Monter" <%= index === 0 ? 'disabled' : '' %>>▲</button>
+              </form>
+              <span class="question-index"><%= index + 1 %></span>
+              <form action="/documentation/blocs/<%= block.id %>/deplacer" method="post">
+                <button type="submit" name="direction" value="down" class="icon-btn" title="Descendre" <%= index === blocks.length - 1 ? 'disabled' : '' %>>▼</button>
+              </form>
+            </div>
+
+            <div class="builder-body">
+              <span class="badge"><%= block.typeLabel %></span>
+              <p class="doc-preview"><%= block.preview %></p>
+            </div>
+
+            <form action="/documentation/blocs/<%= block.id %>/supprimer" method="post">
+              <button type="submit" class="icon-btn icon-btn-danger" title="Supprimer le bloc">✕</button>
+            </form>
+          </article>
+        <% }); %>
+      </div>
+    </section>
+  <% } %>
+<% } %>

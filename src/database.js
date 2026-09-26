@@ -33,4 +33,4 @@ export async function closeDatabasePool() {
     poolInstance = null;
     await pool.end();
   }
-}
+}

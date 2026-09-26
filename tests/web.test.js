@@ -1,3 +1,4 @@
+import './helpers/env.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -9,10 +10,10 @@ import {
 } from '../src/services/discord.js';
 import { getLinkedRobloxData } from '../src/services/roblox.js';
 import { fetchMemberSanctions } from '../src/services/sanctions.js';
+import { recordSiteLogin } from '../src/services/members.js';
+import { getRoleLabels } from '../src/config/roles.js';
 import { createApp } from '../src/server.js';
 import { webConfig } from '../src/config.js';
-
-webConfig.discordToken = webConfig.discordToken || 'test-mock-bot-token';
 
 test('session encryption seals and unseals data with tamper protection', () => {
   const secret = 'my-super-secret-test-key-32byteslong';
@@ -197,6 +198,37 @@ test('fetchMemberSanctions queries strikes and cases tables', async () => {
   assert.equal(result.totalCount, 2);
 });
 
+test('role mapping returns every configured grade in role order', () => {
+  assert.deepEqual(getRoleLabels([
+    '1487264228342497384',
+    '1487266203864006707',
+    'unknown-role',
+    '1487272686483804261',
+  ]), ['Conseil O5', 'Comité d’éthique', 'FIM']);
+});
+
+test('site login tracking creates its table and upserts current Discord identity', async () => {
+  const queries = [];
+  const pool = {
+    execute: async (query, params = []) => {
+      queries.push({ query, params });
+      return [[]];
+    },
+  };
+
+  assert.equal(await recordSiteLogin({
+    id: 'discord-123',
+    username: 'Pilot',
+    globalName: 'FPCS Pilot',
+    avatarUrl: 'https://cdn.discordapp.com/avatar.png',
+  }, pool), true);
+  assert.match(queries[0].query, /CREATE TABLE IF NOT EXISTS site_users/);
+  assert.match(queries[1].query, /ON DUPLICATE KEY UPDATE/);
+  assert.deepEqual(queries[1].params, [
+    'discord-123', 'Pilot', 'FPCS Pilot', 'https://cdn.discordapp.com/avatar.png',
+  ]);
+});
+
 test('web server renders home page with Discord login link', async () => {
   const app = createApp({ pool: null });
   const server = http.createServer(app);
@@ -208,9 +240,16 @@ test('web server renders home page with Discord login link', async () => {
     const res = await fetch(`http://localhost:${port}/`);
     assert.equal(res.status, 200);
     const html = await res.text();
-    assert.match(html, /French Squadron Utilities/);
-    assert.match(html, /Se connecter avec Discord/);
+    assert.match(html, /Site-66/);
+    assert.match(html, /Connexion Discord/);
     assert.match(html, /\/auth\/discord/);
+    // Candidatures and Documentation are live tabs now, no "Bientôt" placeholder.
+    assert.match(html, /href="\/candidatures"/);
+    assert.match(html, /href="\/documentation"/);
+    assert.doesNotMatch(html, /Bientôt/);
+    // « Réponses » is reserved to the forms-management role.
+    assert.doesNotMatch(html, /href="\/reponses"/);
+    assert.match(html, /Conditions d’utilisation/);
   } finally {
     server.close();
   }
@@ -299,7 +338,7 @@ test('web server /auth/discord/callback handles successful token exchange and cr
     });
 
     assert.equal(res.status, 302);
-    assert.equal(res.headers.get('location'), '/profile');
+    assert.equal(res.headers.get('location'), '/');
     const setCookie = res.headers.get('set-cookie');
     assert.match(setCookie, /fpcs_session=/);
   } finally {
@@ -377,13 +416,27 @@ test('web server /profile renders profile with sanctions when role 1553099793532
   };
 
   const fakeFetch = async (url) => {
+    if (url.includes('discord.com/api/v10/guilds') && url.endsWith('/roles')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([
+          { id: '1487264228342497384', name: 'Conseil O5' },
+          { id: '1487266203864006707', name: 'Comité d’éthique' },
+        ]),
+      };
+    }
     if (url.includes('discord.com/api/v10/guilds')) {
       return {
         ok: true,
         status: 200,
         json: async () => ({
           nick: 'Squadron Lead',
-          roles: ['1553099793532854382'], // Target role present!
+          roles: [
+            '1553099793532854382',
+            '1487264228342497384',
+            '1487266203864006707',
+          ],
         }),
       };
     }
@@ -433,10 +486,16 @@ test('web server /profile renders profile with sanctions when role 1553099793532
     assert.match(html, /#10/);
 
     // Verifies role presence and sanctions display
-    assert.match(html, /Fiche Publique Active \(Rôle 1553099793532854382\)/);
-    assert.match(html, /Fiche Personnelle Publique/);
+    assert.match(html, /Historique des sanctions/);
+    assert.match(html, /Conseil O5/);
+    assert.match(html, /Comité d’éthique/);
+    assert.match(html, /\[Comité d’éthique\]/);
+    assert.match(html, /href="\/members"/);
     assert.match(html, /Absence en vol sans préavis/);
     assert.match(html, /Avertissement n°101/);
+    // Two-column profile layout: grades left, connections right
+    assert.match(html, /profile-columns/);
+    assert.match(html, /Connexions/);
   } finally {
     server.close();
   }
@@ -482,9 +541,174 @@ test('web server /profile displays restricted message when target role is missin
     assert.equal(res.status, 200);
     const html = await res.text();
 
-    assert.match(html, /Fiche Personnelle Restreinte/);
-    assert.match(html, /Rôle 1553099793532854382 non détecté/);
-    assert.doesNotMatch(html, /Fiche Publique Active/);
+    assert.match(html, /Sanctions non affichées/);
+    assert.doesNotMatch(html, /href="\/members"/);
+    assert.doesNotMatch(html, /Absence en vol sans préavis/);
+  } finally {
+    server.close();
+  }
+});
+
+test('web server connected dashboard uses Roblox identity when linked', async () => {
+  const userId = '1454217001626243288';
+  const sessionToken = sealSession({
+    user: {
+      id: userId,
+      username: 'DiscordPilot',
+      globalName: 'Discord Pilot',
+      avatarUrl: 'https://cdn.discordapp.com/discord-avatar.png',
+    },
+  }, webConfig.sessionSecret);
+  const pool = {
+    execute: async (query) => query.includes('roblox_discord_links')
+      ? [[{ discord_user_id: userId, roblox_user_id: '7654', roblox_username: 'RobloxPilot', verification_rank: '7' }]]
+      : [[]],
+  };
+  const fakeFetch = async (url) => {
+    if (url.includes('users.roblox.com')) return { ok: true, json: async () => ({ id: 7654, name: 'RobloxPilot' }) };
+    if (url.includes('thumbnails.roblox.com')) return { ok: true, json: async () => ({ data: [{ imageUrl: 'https://images.roblox.com/pilot.png' }] }) };
+    if (url.includes('discord.com/api/v10/guilds')) return { ok: true, status: 200, json: async () => ({ roles: [] }) };
+    return { ok: false, status: 404 };
+  };
+  const app = createApp({ pool, fetchFn: fakeFetch });
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+
+  try {
+    const res = await fetch(`http://localhost:${server.address().port}/`, {
+      headers: { Cookie: `${webConfig.cookieName}=${sessionToken}` },
+    });
+    const html = await res.text();
+    assert.equal(res.status, 200);
+    assert.match(html, /Bonjour, RobloxPilot/);
+    assert.match(html, /RobloxPilot/);
+    assert.match(html, /Mon profil/);
+    assert.match(html, /Candidatures/);
+  } finally {
+    server.close();
+  }
+});
+
+test('web server dashboard falls back to Discord identity when Roblox is not linked', async () => {
+  const sessionToken = sealSession({
+    user: {
+      id: 'unlinked-user',
+      username: 'DiscordPilot',
+      globalName: 'Discord Pilot',
+      avatarUrl: 'https://cdn.discordapp.com/discord-avatar.png',
+    },
+  }, webConfig.sessionSecret);
+  const fakeFetch = async (url) => url.includes('discord.com/api/v10/guilds')
+    ? { ok: true, status: 200, json: async () => ({ roles: [] }) }
+    : { ok: false, status: 404 };
+  const app = createApp({ pool: null, fetchFn: fakeFetch });
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+
+  try {
+    const res = await fetch(`http://localhost:${server.address().port}/`, {
+      headers: { Cookie: `${webConfig.cookieName}=${sessionToken}` },
+    });
+    const html = await res.text();
+    assert.equal(res.status, 200);
+    assert.match(html, /Bonjour, Discord Pilot/);
+    assert.match(html, /discord-avatar\.png/);
+    assert.match(html, /\/verification-panel/);
+    assert.match(html, /Aucun compte Roblox n’est encore lié/);
+  } finally {
+    server.close();
+  }
+});
+
+test('legal pages and project favicon are available without login', async () => {
+  const app = createApp({ pool: null });
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+
+  try {
+    const terms = await fetch(`http://localhost:${server.address().port}/terms`);
+    assert.equal(terms.status, 200);
+    assert.match(await terms.text(), /Conditions Générales d’Utilisation/);
+
+    const privacy = await fetch(`http://localhost:${server.address().port}/privacy`);
+    assert.equal(privacy.status, 200);
+    assert.match(await privacy.text(), /Politique de Confidentialité/);
+
+    const favicon = await fetch(`http://localhost:${server.address().port}/favicon.svg`);
+    assert.equal(favicon.status, 200);
+    assert.match(await favicon.text(), /<svg/);
+  } finally {
+    server.close();
+  }
+});
+
+test('staff routes deny direct access unless current Discord roles include supervision', async () => {
+  const sessionToken = sealSession({
+    user: { id: 'regular-user', username: 'Regular', globalName: 'Regular', avatarUrl: 'https://cdn.discordapp.com/avatar.png' },
+  }, webConfig.sessionSecret);
+  const fakeFetch = async () => ({ ok: true, status: 200, json: async () => ({ roles: [] }) });
+  const app = createApp({ pool: null, fetchFn: fakeFetch });
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+
+  try {
+    const res = await fetch(`http://localhost:${server.address().port}/members`, {
+      headers: { Cookie: `${webConfig.cookieName}=${sessionToken}` },
+    });
+    assert.equal(res.status, 403);
+    assert.match(await res.text(), /Accès réservé/);
+  } finally {
+    server.close();
+  }
+});
+
+test('staff can open a read-only profile and sanctions for a previously logged in member', async () => {
+  const staffSession = sealSession({
+    user: { id: 'staff-user', username: 'Staff', globalName: 'Staff User', avatarUrl: 'https://cdn.discordapp.com/staff.png' },
+  }, webConfig.sessionSecret);
+  const pool = {
+    execute: async (query) => {
+      if (query.includes('CREATE TABLE')) return [[]];
+      if (query.includes('SELECT users.discord_user_id')) {
+        return [[{
+          discord_user_id: 'member-user',
+          discord_username: 'Member',
+          global_name: 'Member User',
+          avatar_url: 'https://cdn.discordapp.com/member.png',
+          last_login: new Date('2025-01-01T00:00:00Z'),
+          roblox_username: 'MemberRoblox',
+        }]];
+      }
+      if (query.includes('FROM roblox_discord_links')) {
+        return [[{ discord_user_id: 'member-user', roblox_user_id: '9977', roblox_username: 'MemberRoblox', verification_rank: '2' }]];
+      }
+      if (query.includes('FROM strikes')) {
+        return [[{ id: 15, moderator_discord_id: 'mod', raison: 'Historique staff', created_at: new Date('2025-01-01T00:00:00Z') }]];
+      }
+      return [[]];
+    },
+  };
+  const fakeFetch = async (url) => {
+    if (url.endsWith('/staff-user')) return { ok: true, status: 200, json: async () => ({ roles: ['1553099793532854382'] }) };
+    if (url.endsWith('/member-user')) return { ok: true, status: 200, json: async () => ({ roles: [] }) };
+    if (url.includes('users.roblox.com')) return { ok: true, json: async () => ({ id: 9977, name: 'MemberRoblox' }) };
+    if (url.includes('thumbnails.roblox.com')) return { ok: true, json: async () => ({ data: [{ imageUrl: 'https://images.roblox.com/member.png' }] }) };
+    return { ok: false, status: 404 };
+  };
+  const app = createApp({ pool, fetchFn: fakeFetch });
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+
+  try {
+    const res = await fetch(`http://localhost:${server.address().port}/members/member-user`, {
+      headers: { Cookie: `${webConfig.cookieName}=${staffSession}` },
+    });
+    const html = await res.text();
+    assert.equal(res.status, 200);
+    assert.match(html, /Fiche membre en lecture seule/);
+    assert.match(html, /MemberRoblox/);
+    assert.match(html, /Historique staff/);
+    assert.match(html, /Retour à la supervision/);
   } finally {
     server.close();
   }

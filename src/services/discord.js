@@ -32,6 +32,56 @@ export function formatDate(date) {
 }
 
 /**
+ * Fetches the guild's role list via the bot token and returns a Map of
+ * roleId -> role name. `fetchGuildMemberRoles` only yields role snowflakes,
+ * so this is what lets the profile render a human-readable role name.
+ * Cached in memory because the guild role list is near-static.
+ */
+const guildRoleNameCache = new Map();
+const GUILD_ROLE_TTL_MS = 10 * 60 * 1000;
+
+export async function fetchGuildRoleNames({
+  guildId = webConfig.guildId,
+  botToken = webConfig.discordToken,
+  fetchFn = fetch,
+} = {}) {
+  if (!botToken || !guildId) return new Map();
+
+  const cached = guildRoleNameCache.get(guildId);
+  if (cached && cached.expires > Date.now()) return cached.names;
+
+  try {
+    const response = await fetchFn(
+      `https://discord.com/api/v10/guilds/${guildId}/roles`,
+      {
+        headers: {
+          Authorization: `Bot ${botToken}`,
+        },
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+
+    if (!response.ok) {
+      console.warn(`[DiscordService] Guild roles fetch returned ${response.status} for guild ${guildId}`);
+      return new Map();
+    }
+
+    const roles = await response.json();
+    const names = new Map(
+      (Array.isArray(roles) ? roles : [])
+        .filter((role) => role && role.id && role.name)
+        .map((role) => [role.id, role.name])
+    );
+
+    guildRoleNameCache.set(guildId, { names, expires: Date.now() + GUILD_ROLE_TTL_MS });
+    return names;
+  } catch (error) {
+    console.error(`[DiscordService] Error fetching roles for guild ${guildId}:`, error.message);
+    return new Map();
+  }
+}
+
+/**
  * Fetches the user's guild member data via Discord Bot token to inspect roles
  * without requiring the oauth guilds.members.read scope.
  */
@@ -95,5 +145,107 @@ export async function fetchGuildMemberRoles({
       hasTargetRole: false,
       error: error.message,
     };
+  }
+}
+
+const DISCORD_API_BASE = 'https://discord.com/api/v10';
+
+/**
+ * Adds a single role to a guild member through the Bot token.
+ * Used when a candidature is accepted from the web portal.
+ */
+export async function grantGuildMemberRole({
+  userId,
+  roleId,
+  guildId = webConfig.guildId,
+  botToken = webConfig.discordToken,
+  fetchFn = fetch,
+} = {}) {
+  if (!userId || !roleId) {
+    return { ok: false, status: 400, error: 'Identifiant utilisateur ou rôle manquant.' };
+  }
+  if (!botToken || !guildId) {
+    return { ok: false, status: 503, error: 'Le bot Discord n’est pas configuré.' };
+  }
+
+  try {
+    const response = await fetchFn(
+      `${DISCORD_API_BASE}/guilds/${guildId}/members/${userId}/roles/${roleId}`,
+      {
+        method: 'PUT',
+        headers: { Authorization: `Bot ${botToken}` },
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+
+    if (response.status === 204 || response.ok) return { ok: true, status: response.status };
+    return { ok: false, status: response.status, error: `Discord a refusé l’attribution du rôle (HTTP ${response.status}).` };
+  } catch (error) {
+    console.error(`[DiscordService] Error granting role ${roleId} to ${userId}:`, error.message);
+    return { ok: false, status: 500, error: 'Impossible de contacter l’API Discord.' };
+  }
+}
+
+/**
+ * Opens a DM channel with a user and posts the given embeds.
+ * Accepts ready-made discord.js embeds (or plain payload objects) so the bot
+ * keeps a single source of truth for message formatting.
+ */
+export async function sendDirectMessage({
+  userId,
+  embeds = [],
+  botToken = webConfig.discordToken,
+  fetchFn = fetch,
+} = {}) {
+  if (!userId) {
+    return { ok: false, status: 400, error: 'Identifiant utilisateur manquant.' };
+  }
+  if (!botToken) {
+    return { ok: false, status: 503, error: 'Le bot Discord n’est pas configuré.' };
+  }
+  if (!embeds.length) {
+    return { ok: false, status: 400, error: 'Aucun message à envoyer.' };
+  }
+
+  const payload = embeds.map((embed) => (typeof embed?.toJSON === 'function' ? embed.toJSON() : embed));
+  const headers = {
+    Authorization: `Bot ${botToken}`,
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    const channelResponse = await fetchFn(`${DISCORD_API_BASE}/users/@me/channels`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ recipient_id: userId }),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!channelResponse.ok) {
+      console.warn(`[DiscordService] DM channel creation failed for ${userId} (HTTP ${channelResponse.status}).`);
+      return { ok: false, status: channelResponse.status, error: 'Le membre n’accepte pas les messages directs.' };
+    }
+
+    const channel = await channelResponse.json();
+    if (!channel?.id) {
+      return { ok: false, status: 500, error: 'Réponse inattendue de l’API Discord.' };
+    }
+
+    const messageResponse = await fetchFn(`${DISCORD_API_BASE}/channels/${channel.id}/messages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ embeds: payload }),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!messageResponse.ok) {
+      console.warn(`[DiscordService] DM send failed for ${userId} (HTTP ${messageResponse.status}).`);
+      return { ok: false, status: messageResponse.status, error: 'Le message direct n’a pas pu être envoyé.' };
+    }
+
+    return { ok: true, status: messageResponse.status, channelId: channel.id };
+  } catch (error) {
+    console.error(`[DiscordService] Error sending DM to ${userId}:`, error.message);
+    return { ok: false, status: 500, error: 'Impossible de contacter l’API Discord.' };
   }
 }

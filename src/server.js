@@ -33,7 +33,15 @@ export function createApp({ pool = getDatabasePool(), fetchFn, config = webConfi
         originalRender.call(
           this,
           'layout',
-          { ...options, body: html, currentUser: req.session?.user || null },
+          {
+            ...options,
+            body: html,
+            currentUser: req.session?.user || null,
+            // `req.path` est relatif au point de montage du routeur : dans un
+            // sous-routeur (`/candidatures`, `/documentation`, ...) il vaut "/" et
+            // non le chemin réel. `originalUrl` donne toujours le chemin complet.
+            currentPath: req.originalUrl.split('?')[0],
+          },
           callback
         );
       });
@@ -46,9 +54,10 @@ export function createApp({ pool = getDatabasePool(), fetchFn, config = webConfi
   app.use(express.urlencoded({ extended: true }));
   app.use(express.json());
   app.use(sessionMiddleware());
+  app.use(express.static(path.join(__dirname, 'public')));
 
   // Montage des routeurs
-  app.use('/auth', createOAuthRouter({ config, fetchFn }));
+  app.use('/auth', createOAuthRouter({ config, fetchFn, pool }));
   app.use('/', createMainRouter({ pool, fetchFn }));
 
   // Gestion des pages non trouvées (404)

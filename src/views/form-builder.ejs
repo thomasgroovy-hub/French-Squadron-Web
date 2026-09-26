@@ -1,0 +1,122 @@
+<a href="/candidatures" class="btn btn-outline btn-sm" style="width: fit-content;">Retour aux candidatures</a>
+
+<section class="card" style="margin-top: 1rem;">
+  <p class="eyebrow"><%= isNew ? 'Nouveau formulaire' : 'Gestion du formulaire' %></p>
+  <h1 style="font-size: 1.8rem; margin: 0.35rem 0;"><%= isNew ? 'Créer un formulaire' : form.title %></h1>
+  <div class="pill-row">
+    <span class="pill"><span class="badge badge-<%= form.status === 'open' ? 'success' : (form.status === 'closed' ? 'danger' : 'warning') %>"><%= form.statusLabel %></span></span>
+    <% if (form.grantedRoleId) { %>
+      <span class="pill">Rôle attribué : <span class="pill-mono"><%= form.grantedRoleName || form.grantedRoleId %></span></span>
+    <% } %>
+  </div>
+</section>
+
+<% if (notice) { %>
+  <div class="notice notice-success" style="margin-top: 1rem;"><%= notice %></div>
+<% } %>
+<% if (error) { %>
+  <div class="notice notice-danger" style="margin-top: 1rem;"><%= error %></div>
+<% } %>
+
+<form id="form-editor" action="<%= isNew ? '/candidatures' : '/candidatures/' + form.id %>" method="post" class="stack" style="margin-top: 1rem;">
+  <section class="card">
+    <div class="section-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 3.8h7l4 4V20H7z"/><path d="M14 4v4h4"/></svg>
+      <h2>Informations</h2>
+    </div>
+
+    <div class="field-block">
+      <label class="field-label" for="form-title">Titre</label>
+      <input class="field-input" id="form-title" type="text" name="title" value="<%= form.title %>" maxlength="120" placeholder="Recrutement de pilote" required>
+    </div>
+
+    <div class="field-block">
+      <label class="field-label" for="form-description">Description globale</label>
+      <p class="question-help">Affichée en haut du formulaire, avant les questions.</p>
+      <textarea class="field-input" id="form-description" name="description" rows="4" maxlength="2000" placeholder="Présentez le poste et ce que vous attendez des candidats."><%= form.description %></textarea>
+    </div>
+
+    <div class="field-block">
+      <label class="field-label" for="form-role">Rôle Discord attribué à l’acceptation</label>
+      <p class="question-help">Identifiant du rôle à ajouter automatiquement au candidat. Laissez vide si l’acceptation n’accorde aucun rôle.</p>
+      <input class="field-input" id="form-role" type="text" name="granted_role_id" value="<%= form.grantedRoleId || '' %>" maxlength="20" placeholder="1532037579816570981" pattern="[0-9]*">
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>
+      <h2>Questions</h2>
+      <span class="row-aside">
+        <button type="submit" name="action" value="add_question" class="btn btn-outline btn-sm">Ajouter une question</button>
+      </span>
+    </div>
+
+    <div class="stack">
+      <% form.questions.forEach((question, index) => { %>
+        <article class="builder-row">
+          <div class="builder-order">
+            <button type="submit" name="move" value="up:<%= question.id %>" class="icon-btn" title="Monter" <%= index === 0 ? 'disabled' : '' %>>▲</button>
+            <span class="question-index"><%= index + 1 %></span>
+            <button type="submit" name="move" value="down:<%= question.id %>" class="icon-btn" title="Descendre" <%= index === form.questions.length - 1 ? 'disabled' : '' %>>▼</button>
+          </div>
+          <div class="builder-body">
+            <input type="hidden" name="question_id[]" value="<%= question.id || '' %>">
+            <label class="field-label" for="q-label-<%= question.id || 'new' + index %>">Intitulé</label>
+            <input class="field-input" id="q-label-<%= question.id || 'new' + index %>" type="text" name="question_label[]" value="<%= question.label %>" maxlength="200" placeholder="Pourquoi souhaitez-vous rejoindre l’équipe ?">
+
+            <label class="field-label" for="q-help-<%= question.id || 'new' + index %>">Description / aide</label>
+            <input class="field-input" id="q-help-<%= question.id || 'new' + index %>" type="text" name="question_help[]" value="<%= question.helpText %>" maxlength="500" placeholder="Précisez ce que vous attendez comme réponse.">
+
+            <label class="field-label" for="q-type-<%= question.id || 'new' + index %>">Type de champ</label>
+            <select class="field-input" id="q-type-<%= question.id || 'new' + index %>" name="question_type[]">
+              <option value="short" <%= question.fieldType === 'short' ? 'selected' : '' %>>Petite réponse (une ligne)</option>
+              <option value="long" <%= question.fieldType === 'long' ? 'selected' : '' %>>Longue réponse (zone de texte)</option>
+            </select>
+          </div>
+          <button type="submit" name="action" value="remove_question:<%= question.id %>" class="icon-btn icon-btn-danger" title="Supprimer la question">✕</button>
+        </article>
+      <% }); %>
+
+      <% if (!form.questions.length) { %>
+        <div class="empty-state">
+          <span class="empty-state-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6h13M8 12h13M8 18h13"/></svg>
+          </span>
+          <p>Aucune question pour le moment.</p>
+        </div>
+      <% } %>
+    </div>
+  </section>
+
+  <div class="row-aside toolbar">
+    <button type="submit" name="action" value="save" class="btn btn-discord">Enregistrer</button>
+
+    <% if (!isNew) { %>
+      <% if (form.status === 'open') { %>
+        <button type="submit" formaction="/candidatures/<%= form.id %>/fermer" class="btn btn-outline">Fermer les candidatures</button>
+      <% } else { %>
+        <button type="submit" formaction="/candidatures/<%= form.id %>/publier" class="btn btn-outline" <%= publishBlock ? 'disabled title="Publication limitée"' : '' %>>
+          <%= form.status === 'closed' ? 'Rouvrir' : 'Publier' %>
+        </button>
+      <% } %>
+    <% } %>
+  </div>
+
+  <% if (!isNew && publishBlock) { %>
+    <p class="muted" style="text-align: right;">Publication limitée : encore <%= publishBlock %> minute<%= publishBlock > 1 ? 's' : '' %> avant de pouvoir publier un nouveau formulaire (limite de <%= cooldownMinutes %> minutes).</p>
+  <% } %>
+</form>
+
+<% if (!isNew) { %>
+  <section class="card" style="margin-top: 1.25rem; border-color: var(--border-strong);">
+    <div class="section-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5"/></svg>
+      <h2>Zone sensible</h2>
+    </div>
+    <p class="muted">Supprimer ce formulaire efface aussi toutes les candidatures qu’il a reçues.</p>
+    <form action="/candidatures/<%= form.id %>/supprimer" method="post" style="margin-top: 0.9rem;">
+      <button type="submit" class="btn btn-outline">Supprimer le formulaire</button>
+    </form>
+  </section>
+<% } %>

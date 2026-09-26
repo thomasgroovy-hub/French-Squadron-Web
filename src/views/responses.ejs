@@ -1,0 +1,79 @@
+<section class="card">
+  <p class="eyebrow">Réponses</p>
+  <h1 style="font-size: 1.8rem; margin: 0.35rem 0;">Vos candidatures</h1>
+  <p class="muted">Vous ne voyez ici que les réponses aux formulaires que vous avez créés.</p>
+</section>
+
+<% if (!entries.length) { %>
+  <section class="card" style="margin-top: 1rem;">
+    <div class="empty-state">
+      <span class="empty-state-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5.5h14v10H9l-4 3.5z"/></svg>
+      </span>
+      <p>Vous n’avez pas encore de formulaire. Créez-en un depuis l’onglet Candidatures.</p>
+    </div>
+  </section>
+<% } else { %>
+
+  <% entries.forEach((entry) => { const form = entry.form; %>
+    <section class="card" style="margin-top: 1rem;">
+      <div class="section-head">
+        <span class="row-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3.8h7l4 4V20H7z"/><path d="M14 4v4h4"/></svg>
+        </span>
+        <h2><a href="/candidatures/<%= form.id %>" style="color: inherit;"><%= form.title %></a></h2>
+        <span class="row-aside">
+          <span class="badge badge-<%= form.status === 'open' ? 'success' : (form.status === 'closed' ? 'danger' : 'warning') %>"><%= form.statusLabel %></span>
+        </span>
+      </div>
+
+      <div class="stat-strip">
+        <div class="stat">
+          <span class="stat-value"><%= entry.stats.total %></span>
+          <span class="stat-label">Total</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value"><%= entry.stats.pending %></span>
+          <span class="stat-label">En attente</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value"><%= entry.stats.accepted %></span>
+          <span class="stat-label">Acceptées</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value"><%= entry.stats.rejected %></span>
+          <span class="stat-label">Refusées</span>
+        </div>
+      </div>
+
+      <% if (entry.responses.length) { %>
+        <div class="row-list">
+          <% entry.responses.forEach((response) => { %>
+            <article class="data-row">
+              <% if (response.avatarUrl) { %>
+                <img class="row-avatar" src="<%= response.avatarUrl %>" alt="" width="34" height="34">
+              <% } else { %>
+                <span class="row-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="9" r="3.2"/><path d="M5.5 19.5a6.5 6.5 0 0113 0"/></svg>
+                </span>
+              <% } %>
+              <div class="row-body">
+                <div class="row-title"><%= response.username %></div>
+                <div class="row-subtitle">
+                  <%= response.displayName || response.username %>
+                  <% if (response.reviewedAt) { %>· traité<% } %>
+                </div>
+              </div>
+              <div class="row-aside">
+                <span class="badge badge-<%= response.status === 'accepted' ? 'success' : (response.status === 'rejected' ? 'danger' : 'warning') %>"><%= response.statusLabel %></span>
+                <a href="/reponses/<%= response.id %>" class="btn btn-outline btn-sm">Ouvrir</a>
+              </div>
+            </article>
+          <% }); %>
+        </div>
+      <% } else { %>
+        <p class="muted">Aucune candidature reçue pour l’instant.</p>
+      <% } %>
+    </section>
+  <% }); %>
+<% } %>

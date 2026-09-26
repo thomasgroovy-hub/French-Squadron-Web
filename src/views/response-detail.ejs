@@ -1,0 +1,100 @@
+<a href="/reponses" class="btn btn-outline btn-sm" style="width: fit-content;">Retour aux réponses</a>
+
+<section class="card" style="margin-top: 1rem;">
+  <div class="section-head">
+    <% if (applicantAvatarUrl) { %>
+      <img class="row-avatar" src="<%= applicantAvatarUrl %>" alt="" width="42" height="42">
+    <% } else { %>
+      <span class="row-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="9" r="3.2"/><path d="M5.5 19.5a6.5 6.5 0 0113 0"/></svg>
+      </span>
+    <% } %>
+    <div>
+      <p class="eyebrow" style="margin: 0;">Candidature · <a href="/candidatures/<%= response.formId %>"><%= response.formTitle %></a></p>
+      <h1 style="font-size: 1.6rem; margin: 0.25rem 0;"><%= applicantName || applicantUsername || response.applicantDiscordId %></h1>
+      <p class="muted" style="margin: 0;">
+        <%= applicantUsername || response.applicantDiscordId %>
+        <% if (response.createdAt) { %>· reçue le <%= response.createdAt %><% } %>
+      </p>
+    </div>
+    <span class="row-aside">
+      <span class="badge badge-<%= response.status === 'accepted' ? 'success' : (response.status === 'rejected' ? 'danger' : 'warning') %>"><%= response.statusLabel %></span>
+    </span>
+  </div>
+</section>
+
+<% if (notice) { %>
+  <div class="notice notice-success" style="margin-top: 1rem;"><%= notice %></div>
+<% } %>
+<% if (warning) { %>
+  <div class="notice notice-danger" style="margin-top: 1rem;"><%= warning %></div>
+<% } %>
+
+<section class="card" style="margin-top: 1rem;">
+  <div class="section-head">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/></svg>
+    <h2>Réponses</h2>
+  </div>
+
+  <div class="stack">
+    <% response.questions.forEach((question, index) => { %>
+      <% const value = response.answers[String(question.id)]; %>
+      <article class="answer-block">
+        <div class="answer-label">
+          <span class="question-index"><%= index + 1 %></span>
+          <div>
+            <div class="question-label" style="margin: 0;"><%= question.label %></div>
+            <% if (question.helpText) { %><p class="question-help" style="margin: 0;"><%= question.helpText %></p><% } %>
+          </div>
+        </div>
+        <% if (value) { %>
+          <p class="answer-value"><%= value %></p>
+        <% } else { %>
+          <p class="muted">Aucune réponse.</p>
+        <% } %>
+      </article>
+    <% }); %>
+  </div>
+</section>
+
+<% if (response.status !== 'pending') { %>
+  <section class="card" style="margin-top: 1rem;">
+    <h2>Traitement</h2>
+    <dl class="detail-list">
+      <div><dt>Décision</dt><dd><%= response.statusLabel %></dd></div>
+      <% if (response.reviewedAt) { %><div><dt>Date</dt><dd><%= response.reviewedAt %></dd></div><% } %>
+      <% if (response.grantedRoleId) { %>
+        <div>
+          <dt>Rôle attribué</dt>
+          <dd>
+            <span class="pill-mono"><%= response.grantedRoleId %></span>
+            <% if (response.grantedRoleName) { %><%= response.grantedRoleName %><% } %>
+            <% if (response.grantedRoleName === null) { %><span class="muted">(nom introuvable)</span><% } %>
+          </dd>
+        </div>
+      <% } %>
+    </dl>
+  </section>
+<% } else { %>
+  <section class="card" style="margin-top: 1rem;">
+    <div class="section-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 12.5l2 2 4-4.5"/><path d="M12 3.5l7.5 3.2v5.1c0 4-3.1 7.4-7.5 8.7-4.4-1.3-7.5-4.7-7.5-8.7V6.7z"/></svg>
+      <h2>Décision</h2>
+    </div>
+    <p class="muted">
+      <% if (response.grantedRoleId) { %>
+        L’acceptation ajoutera automatiquement le rôle <span class="pill-mono"><%= response.grantedRoleId %></span> au candidat puis lui enverra un message privé.
+      <% } else { %>
+        Ce formulaire n’accorde aucun rôle : l’acceptation enverra uniquement un message privé au candidat.
+      <% } %>
+    </p>
+    <div class="row-aside toolbar" style="justify-content: flex-end; margin-top: 1rem;">
+      <form action="/reponses/<%= response.id %>/refuser" method="post">
+        <button type="submit" class="btn btn-outline">Refuser</button>
+      </form>
+      <form action="/reponses/<%= response.id %>/accepter" method="post">
+        <button type="submit" class="btn btn-discord">Accepter</button>
+      </form>
+    </div>
+  </section>
+<% } %>
