@@ -6,7 +6,7 @@ import { webConfig, validateWebConfig } from './config.js';
 import { sessionMiddleware } from './auth/session.js';
 import { createOAuthRouter } from './auth/oauth.js';
 import { createMainRouter } from './routes/index.js';
-import { createRobloxWebhookRouter } from './routes/roblox-webhook.js';
+
 import { getDatabasePool, getSiteDatabasePool } from './database.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -62,7 +62,7 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
   // Montage des routeurs
   app.use('/auth', createOAuthRouter({ config, fetchFn, pool }));
   app.use('/', createMainRouter({ pool, sitePool, fetchFn }));
-  app.use('/', createRobloxWebhookRouter({ pool, fetchFn }));
+  
 
   // Gestion des pages non trouvées (404)
   app.use((req, res) => {

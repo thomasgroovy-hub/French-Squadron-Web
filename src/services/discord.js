@@ -1,4 +1,5 @@
 import { webConfig } from '../config.js';
+import { recordDeath } from './deaths.js';
 
 export function getDiscordCreationDate(userId) {
   try {
@@ -243,9 +244,58 @@ export async function sendDirectMessage({
       return { ok: false, status: messageResponse.status, error: 'Le message direct n’a pas pu être envoyé.' };
     }
 
-    return { ok: true, status: messageResponse.status, channelId: channel.id };
+return { ok: true, status: messageResponse.status, channelId: channel.id };
   } catch (error) {
     console.error(`[DiscordService] Error sending DM to ${userId}:`, error.message);
-    return { ok: false, status: 500, error: 'Impossible de contacter l’API Discord.' };
+    return { ok: false, status: 500, error: "Impossible de contacter l'API Discord." };
   }
 }
+
+function createPermadeathDeathEmbed({ robloxUsername, eventId, context }) {
+  return {
+    title: '💀 Mort permanente enregistrée',
+    description: 'Votre personnage est décédé en jeu (permadeath).',
+    color: 0x8b0000,
+    fields: [
+      { name: 'Compte Roblox', value: robloxUsername || 'Inconnu', inline: true },
+      ...(eventId ? [{ name: 'ID événement', value: `\`${eventId}\``, inline: true }] : []),
+      ...(context ? [{ name: 'Contexte', value: context.slice(0, 1024) }] : []),
+    ],
+    footer: { text: 'Site-66 · Système Permadeath' },
+    timestamp: new Date().toISOString(),
+  };
+}
+
+export async function sendPermadeathDeathDM({
+  discordUserId,
+  robloxUserId,
+  robloxUsername,
+  eventId = null,
+  context = null,
+  pool,
+  fetchFn = fetch,
+} = {}) {
+  if (!discordUserId || !robloxUserId) {
+    return { ok: false, error: 'discordUserId et robloxUserId sont requis.' };
+  }
+
+  const embed = createPermadeathDeathEmbed({ robloxUsername, eventId, context });
+  const dmResult = await sendDirectMessage({ userId: discordUserId, embeds: [embed], fetchFn });
+
+  if (dmResult.ok) {
+    await recordDeath({
+      discordUserId,
+      robloxUserId,
+      eventId,
+      context,
+      occurredAt: new Date(),
+      pool,
+    });
+  }
+
+  return {
+    ok: dmResult.ok,
+    dmSent: dmResult.ok,
+    error: dmResult.error,
+  };
+};
