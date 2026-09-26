@@ -13,7 +13,7 @@ import { fetchMemberSanctions } from '../services/sanctions.js';
 import { fetchMemberDeaths } from '../services/deaths.js';
 import { fetchAllLinkedMembers, fetchLinkedMember } from '../services/members.js';
 import { getGrades, getRoleLabels } from '../config/roles.js';
-import { hasFormsRole } from '../auth/guards.js';
+import { hasFormsRole, hasMemberManagementRole, requireFormsRole, requireMemberManagementRole } from '../auth/guards.js';
 import { createFormsRouter, createResponsesRouter } from './forms.js';
 import { createDocumentationRouter } from './documentation.js';
 
@@ -25,6 +25,8 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
     try {
       req.memberData = await fetchGuildMemberRoles({ userId: req.session.user.id, fetchFn });
       res.locals.isStaff = req.memberData.hasTargetRole;
+      // Member management role (supervision tab: permadeath, sanctions, member directory)
+      res.locals.isMemberManagement = hasMemberManagementRole(req.memberData);
       // Forms/documentation management role, independent from the sanctions one.
       res.locals.isFormManager = hasFormsRole(req.memberData);
       // Cache for Roblox data to avoid duplicate fetches per request
@@ -125,15 +127,7 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
   router.use('/reponses', createResponsesRouter({ pool, fetchFn }));
   router.use('/documentation', createDocumentationRouter({ pool }));
 
-  router.use('/members', requireAuth, (req, res, next) => {
-    if (!req.memberData?.hasTargetRole) {
-      return res.status(403).render('error', {
-        title: 'AccÃ¨s rÃ©servÃ©',
-        message: 'Cette section est rÃ©servÃ©e aux membres de la supervision.',
-      });
-    }
-    next();
-  });
+  router.use('/members', requireAuth, requireMemberManagementRole);
 
   router.get('/members', async (req, res) => {
     try {

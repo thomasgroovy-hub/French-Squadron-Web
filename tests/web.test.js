@@ -707,7 +707,7 @@ test('staff can open a read-only profile and sanctions for a previously logged i
     },
   };
   const fakeFetch = async (url) => {
-    if (url.endsWith('/staff-user')) return { ok: true, status: 200, json: async () => ({ roles: ['1553099793532854382'] }) };
+    if (url.endsWith('/staff-user')) return { ok: true, status: 200, json: async () => ({ roles: ['1553099793532854382', '1487266203864006707'] }) };
     if (url.endsWith('/member-user')) return { ok: true, status: 200, json: async () => ({ roles: [] }) };
     if (url.includes('users.roblox.com')) return { ok: true, json: async () => ({ id: 9977, name: 'MemberRoblox' }) };
     if (url.includes('thumbnails.roblox.com')) return { ok: true, json: async () => ({ data: [{ imageUrl: 'https://images.roblox.com/member.png' }] }) };

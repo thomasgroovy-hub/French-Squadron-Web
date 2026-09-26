@@ -481,7 +481,7 @@
         <% if (typeof isFormManager !== 'undefined' && isFormManager) { %>
           <a href="/reponses" class="nav-tab <%= currentPath.startsWith('/reponses') ? 'is-active' : '' %>">Réponses</a>
         <% } %>
-        <% if (typeof isStaff !== 'undefined' && isStaff) { %>
+        <% if (typeof isMemberManagement !== 'undefined' && isMemberManagement) { %>
           <a href="/members" class="nav-tab <%= currentPath.startsWith('/members') ? 'is-active' : '' %>">Supervision</a>
         <% } %>
       </div>
