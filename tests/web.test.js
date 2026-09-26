@@ -119,7 +119,7 @@ test('getLinkedRobloxData queries MySQL and Roblox API', async () => {
         discord_user_id: 'discord-user-123',
         roblox_user_id: '54321',
         roblox_username: 'PilotRoblox',
-        verification_rank: '42',
+        verified_at: '2024-03-05T10:00:00Z',
       }]];
     },
   };
@@ -157,7 +157,10 @@ test('getLinkedRobloxData queries MySQL and Roblox API', async () => {
   assert.equal(res.data.displayName, 'AcePilot');
   assert.equal(res.data.userId, '54321');
   assert.equal(res.data.avatarUrl, 'https://images.roblox.com/avatar123.png');
-  assert.equal(res.data.rank, '42');
+  assert.equal(res.data.formattedVerifiedAt, '5 mars 2024');
+  // `roblox_discord_links` has no `verification_rank` column: reading it made
+  // every lookup fail with ER_BAD_FIELD_ERROR and looked like "not verified".
+  assert.equal(res.data.rank, undefined);
 });
 
 test('fetchMemberSanctions queries strikes and cases tables', async () => {
@@ -400,7 +403,7 @@ test('web server /profile renders profile with sanctions when role 1553099793532
           discord_user_id: userId,
           roblox_user_id: '998877',
           roblox_username: 'RobloxCaptain',
-          verification_rank: '10',
+          verified_at: '2024-06-01T09:00:00Z',
         }]];
       }
       if (query.includes('FROM strikes')) {
@@ -561,7 +564,7 @@ test('web server connected dashboard uses Roblox identity when linked', async ()
   }, webConfig.sessionSecret);
   const pool = {
     execute: async (query) => query.includes('roblox_discord_links')
-      ? [[{ discord_user_id: userId, roblox_user_id: '7654', roblox_username: 'RobloxPilot', verification_rank: '7' }]]
+      ? [[{ discord_user_id: userId, roblox_user_id: '7654', roblox_username: 'RobloxPilot', verified_at: '2024-06-01T09:00:00Z' }]]
       : [[]],
   };
   const fakeFetch = async (url) => {
@@ -680,7 +683,7 @@ test('staff can open a read-only profile and sanctions for a previously logged i
         }]];
       }
       if (query.includes('FROM roblox_discord_links')) {
-        return [[{ discord_user_id: 'member-user', roblox_user_id: '9977', roblox_username: 'MemberRoblox', verification_rank: '2' }]];
+        return [[{ discord_user_id: 'member-user', roblox_user_id: '9977', roblox_username: 'MemberRoblox', verified_at: '2024-06-01T09:00:00Z' }]];
       }
       if (query.includes('FROM strikes')) {
         return [[{ id: 15, moderator_discord_id: 'mod', raison: 'Historique staff', created_at: new Date('2025-01-01T00:00:00Z') }]];

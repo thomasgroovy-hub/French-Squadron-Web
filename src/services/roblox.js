@@ -12,7 +12,7 @@ async function getRobloxLink(discordUserId, pool = getDatabasePool()) {
 
   try {
     const [rows] = await pool.execute(
-      'SELECT discord_user_id, roblox_user_id, roblox_username, verification_rank FROM roblox_discord_links WHERE discord_user_id = ? LIMIT 1',
+      'SELECT discord_user_id, roblox_user_id, roblox_username, verified_at FROM roblox_discord_links WHERE discord_user_id = ? LIMIT 1',
       [discordUserId]
     );
     return rows[0] || null;
@@ -92,6 +92,7 @@ export async function getLinkedRobloxData(discordUserId, { pool = getDatabasePoo
   ]);
 
   const createdAt = profile?.created ? new Date(profile.created) : null;
+  const verifiedAt = link.verified_at ? new Date(link.verified_at) : null;
 
   return {
     isLinked: true,
@@ -103,7 +104,11 @@ export async function getLinkedRobloxData(discordUserId, { pool = getDatabasePoo
       formattedCreatedAt: formatDate(createdAt),
       accountAge: formatAccountAge(createdAt),
       avatarUrl: avatarUrl || 'https://tr.rbxcdn.com/150/150/AvatarHeadshot/Png/noFilter',
-      rank: link.verification_rank || null,
+      // `roblox_discord_links.verified_at`, not a rank: the table has no
+      // `verification_rank` column, and selecting it made every lookup fail
+      // with ER_BAD_FIELD_ERROR, which surfaced as "not verified".
+      verifiedAt,
+      formattedVerifiedAt: formatDate(verifiedAt),
     },
   };
 }

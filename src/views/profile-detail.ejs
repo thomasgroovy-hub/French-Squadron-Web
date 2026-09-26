@@ -175,7 +175,7 @@
               <% if (robloxLinked) { %>
                 <div class="row-subtitle"><%= roblox.data.username %></div>
                 <div class="row-subtitle">
-                  <% if (roblox.data.rank) { %>Rang de vérification #<%= roblox.data.rank %> · <% } %>Compte créé le <%= roblox.data.formattedCreatedAt %>
+                  <% if (roblox.data.formattedVerifiedAt) { %>Vérifié le <%= roblox.data.formattedVerifiedAt %> · <% } %>Compte créé le <%= roblox.data.formattedCreatedAt %>
                 </div>
               <% } else { %>
                 <div class="row-subtitle">Non lié</div>
