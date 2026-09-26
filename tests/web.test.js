@@ -111,14 +111,15 @@ test('fetchGuildMemberRoles returns false when user lacks role 15530997935328543
 });
 
 test('getLinkedRobloxData queries MySQL and Roblox API', async () => {
-  const mockPool = {
+  const mockSitePool = {
     execute: async (query, params) => {
-      assert.match(query, /roblox_discord_links/);
+      assert.match(query, /roblox_links/);
       assert.deepEqual(params, ['discord-user-123']);
       return [[{
         discord_user_id: 'discord-user-123',
         roblox_user_id: '54321',
         roblox_username: 'PilotRoblox',
+        verification_rank: '42',
         verified_at: '2024-03-05T10:00:00Z',
       }]];
     },
@@ -148,7 +149,8 @@ test('getLinkedRobloxData queries MySQL and Roblox API', async () => {
   };
 
   const res = await getLinkedRobloxData('discord-user-123', {
-    pool: mockPool,
+    pool: null,
+    sitePool: mockSitePool,
     fetchFn: fakeFetch,
   });
 
@@ -158,9 +160,7 @@ test('getLinkedRobloxData queries MySQL and Roblox API', async () => {
   assert.equal(res.data.userId, '54321');
   assert.equal(res.data.avatarUrl, 'https://images.roblox.com/avatar123.png');
   assert.equal(res.data.formattedVerifiedAt, '5 mars 2024');
-  // `roblox_discord_links` has no `verification_rank` column: reading it made
-  // every lookup fail with ER_BAD_FIELD_ERROR and looked like "not verified".
-  assert.equal(res.data.rank, undefined);
+  assert.equal(res.data.rank, '42');
 });
 
 test('fetchMemberSanctions queries strikes and cases tables', async () => {
@@ -396,16 +396,23 @@ test('web server /profile renders profile with sanctions when role 1553099793532
     },
   }, webConfig.sessionSecret);
 
-  const mockPool = {
+  const mockSitePool = {
     execute: async (query) => {
-      if (query.includes('roblox_discord_links')) {
+      if (query.includes('roblox_links')) {
         return [[{
           discord_user_id: userId,
           roblox_user_id: '998877',
           roblox_username: 'RobloxCaptain',
+          verification_rank: '10',
           verified_at: '2024-06-01T09:00:00Z',
         }]];
       }
+      return [[]];
+    },
+  };
+
+  const mockMainPool = {
+    execute: async (query) => {
       if (query.includes('FROM strikes')) {
         return [[{
           id: 101,
@@ -464,7 +471,7 @@ test('web server /profile renders profile with sanctions when role 1553099793532
     return { ok: false, status: 404 };
   };
 
-  const app = createApp({ pool: mockPool, fetchFn: fakeFetch });
+  const app = createApp({ pool: mockMainPool, sitePool: mockSitePool, fetchFn: fakeFetch });
   const server = http.createServer(app);
 
   await new Promise((resolve) => server.listen(0, resolve));
@@ -562,8 +569,8 @@ test('web server connected dashboard uses Roblox identity when linked', async ()
       avatarUrl: 'https://cdn.discordapp.com/discord-avatar.png',
     },
   }, webConfig.sessionSecret);
-  const pool = {
-    execute: async (query) => query.includes('roblox_discord_links')
+  const sitePool = {
+    execute: async (query) => query.includes('roblox_links')
       ? [[{ discord_user_id: userId, roblox_user_id: '7654', roblox_username: 'RobloxPilot', verified_at: '2024-06-01T09:00:00Z' }]]
       : [[]],
   };
@@ -573,7 +580,7 @@ test('web server connected dashboard uses Roblox identity when linked', async ()
     if (url.includes('discord.com/api/v10/guilds')) return { ok: true, status: 200, json: async () => ({ roles: [] }) };
     return { ok: false, status: 404 };
   };
-  const app = createApp({ pool, fetchFn: fakeFetch });
+  const app = createApp({ pool: null, sitePool, fetchFn: fakeFetch });
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, resolve));
 
@@ -669,9 +676,17 @@ test('staff can open a read-only profile and sanctions for a previously logged i
   const staffSession = sealSession({
     user: { id: 'staff-user', username: 'Staff', globalName: 'Staff User', avatarUrl: 'https://cdn.discordapp.com/staff.png' },
   }, webConfig.sessionSecret);
-  const pool = {
+  const sitePool = {
     execute: async (query) => {
       if (query.includes('CREATE TABLE')) return [[]];
+      if (query.includes('FROM roblox_links')) {
+        return [[{ discord_user_id: 'member-user', roblox_user_id: '9977', roblox_username: 'MemberRoblox', verified_at: '2024-06-01T09:00:00Z' }]];
+      }
+      return [[]];
+    },
+  };
+  const mainPool = {
+    execute: async (query) => {
       if (query.includes('SELECT users.discord_user_id')) {
         return [[{
           discord_user_id: 'member-user',
@@ -681,9 +696,6 @@ test('staff can open a read-only profile and sanctions for a previously logged i
           last_login: new Date('2025-01-01T00:00:00Z'),
           roblox_username: 'MemberRoblox',
         }]];
-      }
-      if (query.includes('FROM roblox_discord_links')) {
-        return [[{ discord_user_id: 'member-user', roblox_user_id: '9977', roblox_username: 'MemberRoblox', verified_at: '2024-06-01T09:00:00Z' }]];
       }
       if (query.includes('FROM strikes')) {
         return [[{ id: 15, moderator_discord_id: 'mod', raison: 'Historique staff', created_at: new Date('2025-01-01T00:00:00Z') }]];
@@ -698,7 +710,7 @@ test('staff can open a read-only profile and sanctions for a previously logged i
     if (url.includes('thumbnails.roblox.com')) return { ok: true, json: async () => ({ data: [{ imageUrl: 'https://images.roblox.com/member.png' }] }) };
     return { ok: false, status: 404 };
   };
-  const app = createApp({ pool, fetchFn: fakeFetch });
+  const app = createApp({ pool: mainPool, sitePool, fetchFn: fakeFetch });
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, resolve));
 

@@ -1,4 +1,4 @@
-import { getDatabasePool } from '../database.js';
+import { getDatabasePool, getSiteDatabasePool } from '../database.js';
 import { formatAccountAge, formatDate } from './discord.js';
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -6,13 +6,16 @@ const profileCache = new Map();
 
 /**
  * Searches for a linked Roblox account for a given Discord user ID in MySQL.
+ * Uses the site's database pool to read from the mirrored roblox_links table.
  */
-async function getRobloxLink(discordUserId, pool = getDatabasePool()) {
-  if (!pool || !discordUserId) return null;
+async function getRobloxLink(discordUserId, { pool = getDatabasePool(), sitePool = getSiteDatabasePool() } = {}) {
+  // Prefer site pool for reading mirror table, fallback to main pool
+  const readPool = sitePool || pool;
+  if (!readPool || !discordUserId) return null;
 
   try {
-    const [rows] = await pool.execute(
-      'SELECT discord_user_id, roblox_user_id, roblox_username, verified_at FROM roblox_discord_links WHERE discord_user_id = ? LIMIT 1',
+    const [rows] = await readPool.execute(
+      'SELECT discord_user_id, roblox_user_id, roblox_username, verification_rank, verified_at FROM roblox_links WHERE discord_user_id = ? LIMIT 1',
       [discordUserId]
     );
     return rows[0] || null;
@@ -77,8 +80,8 @@ async function fetchRobloxAvatar(robloxUserId, fetchFn = fetch) {
 /**
  * Aggregates linked Roblox information with rich profile and avatar data.
  */
-export async function getLinkedRobloxData(discordUserId, { pool = getDatabasePool(), fetchFn = fetch } = {}) {
-  const link = await getRobloxLink(discordUserId, pool);
+export async function getLinkedRobloxData(discordUserId, { pool = getDatabasePool(), sitePool = getSiteDatabasePool(), fetchFn = fetch } = {}) {
+  const link = await getRobloxLink(discordUserId, { pool, sitePool });
   if (!link) {
     return {
       isLinked: false,
@@ -104,9 +107,7 @@ export async function getLinkedRobloxData(discordUserId, { pool = getDatabasePoo
       formattedCreatedAt: formatDate(createdAt),
       accountAge: formatAccountAge(createdAt),
       avatarUrl: avatarUrl || 'https://tr.rbxcdn.com/150/150/AvatarHeadshot/Png/noFilter',
-      // `roblox_discord_links.verified_at`, not a rank: the table has no
-      // `verification_rank` column, and selecting it made every lookup fail
-      // with ER_BAD_FIELD_ERROR, which surfaced as "not verified".
+      rank: link.verification_rank || null,
       verifiedAt,
       formattedVerifiedAt: formatDate(verifiedAt),
     },

@@ -16,7 +16,7 @@ import { hasFormsRole } from '../auth/guards.js';
 import { createFormsRouter, createResponsesRouter } from './forms.js';
 import { createDocumentationRouter } from './documentation.js';
 
-export function createMainRouter({ pool, fetchFn } = {}) {
+export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
   const router = Router();
 
   router.use(async (req, res, next) => {
@@ -43,7 +43,7 @@ export function createMainRouter({ pool, fetchFn } = {}) {
       formattedCreatedAt: formatDate(discordCreatedAt),
       accountAge: formatAccountAge(discordCreatedAt),
     };
-    const roblox = await getLinkedRobloxData(user.id, { pool, fetchFn });
+    const roblox = await getLinkedRobloxData(user.id, { pool, sitePool, fetchFn });
     const hasTargetRole = Boolean(memberData?.hasTargetRole);
     const roleNames = await fetchGuildRoleNames({ fetchFn });
     const grades = getGrades(memberData?.roles || [], roleNames);
@@ -72,7 +72,7 @@ export function createMainRouter({ pool, fetchFn } = {}) {
     }
     try {
       const user = req.session.user;
-      const roblox = await getLinkedRobloxData(user.id, { pool, fetchFn });
+      const roblox = await getLinkedRobloxData(user.id, { pool, sitePool, fetchFn });
       return res.render('dashboard', {
         title: 'Accueil | Site-66',
         isConnected: true,
