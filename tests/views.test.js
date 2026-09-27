@@ -15,6 +15,7 @@ const base = {
   currentPath: '/candidatures',
   isStaff: false,
   isFormManager: true,
+  webConfig: { documentationEnabled: true },
 };
 
 const form = {

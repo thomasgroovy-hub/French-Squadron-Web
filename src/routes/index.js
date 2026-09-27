@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../auth/session.js';
 import { webConfig } from '../config.js';
+import { webConfig as webConfigImport } from '../config.js';
 import {
   fetchGuildMemberDirectory,
   fetchGuildMemberRoles,
@@ -136,7 +137,16 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
   // documentation manager require the forms role.
   router.use('/candidatures', createFormsRouter({ pool, fetchFn }));
   router.use('/reponses', createResponsesRouter({ pool, fetchFn }));
-  router.use('/documentation', createDocumentationRouter({ pool }));
+  if (webConfig.documentationEnabled) {
+    router.use('/documentation', createDocumentationRouter({ pool }));
+  } else {
+    router.get('/documentation', requireAuth, (req, res) => {
+      res.status(503).render('error', {
+        title: 'Documentation indisponible',
+        message: 'Le module de documentation est temporairement désactivé. Merci de votre patience.',
+      });
+    });
+  }
 
   // A member file is reachable by the supervision role and by the comit�
   // d'�thique, which needs it to manage strikes. The tab itself is rendered

@@ -55,10 +55,10 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
             ...options,
             body: html,
             currentUser: req.session?.user || null,
-            // `req.path` est relatif au point de montage du routeur : dans un
-            // sous-routeur (`/candidatures`, `/documentation`, ...) il vaut "/" et
-            // non le chemin réel. `originalUrl` donne toujours le chemin complet.
             currentPath: req.originalUrl.split('?')[0],
+            webConfig: {
+              documentationEnabled: config.documentationEnabled,
+            },
           },
           callback
         );
