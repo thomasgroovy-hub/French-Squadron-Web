@@ -502,6 +502,9 @@
     .empty-state-icon svg { width: 18px; height: 18px; }
     .empty-state p { color: var(--text-muted); font-size: 0.82rem; }
 
+    /* Pour une doc vide, le point d'insertion unique est toujours visible. */
+    .empty-state + .doc-insert .doc-insert-btn { opacity: 1; }
+
     @media (max-width: 780px) {
       .profile-columns { grid-template-columns: 1fr; }
       .profile-name { font-size: 1.5rem; }
