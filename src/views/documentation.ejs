@@ -14,184 +14,250 @@
 <%
   /**
    * Rendu fidèle d'un bloc : c'est exactement le balisage publié dans la doc
-   * publique, réutilisé dans la carte de gestion pour que l'aperçu corresponde
-   * au résultat final. `isFormManager` vient du serveur, jamais de JS.
+   * publique, réutilisé dans l'éditeur pour que l'aperçu corresponde au résultat
+   * final. `isFormManager` vient du serveur, jamais de JS.
+   *
+   * Le bloc « Texte » passe par le markdown Discord, dont la fonction
+   * échappe elle-même le texte : c'est pourquoi sa sortie est imprimée
+   * telle quelle, sans double échappement de la part d'EJS.
    */
   const iconPaths = {
     heading: '<path d="M6 4.5h12M6 10h12M6 15.5h7"/>',
     text: '<path d="M5 6h14M5 10h14M5 14h9"/>',
     link: '<path d="M10.5 13.5a3.5 3.5 0 0 0 5 0l2-2a3.5 3.5 0 0 0-5-5l-1 1"/><path d="M13.5 10.5a3.5 3.5 0 0 0-5 0l-2 2a3.5 3.5 0 0 0 5 5l1-1"/>',
     bullets: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>',
+    separator: '<path d="M4 12h16"/>',
   };
-  const typeOrder = ['heading', 'text', 'link', 'bullets'];
-  const typeLabels = { heading: 'Titre', text: 'Texte', link: 'Lien', bullets: 'Liste' };
+  const typeOrder = ['heading', 'text', 'link', 'bullets', 'separator'];
+  const typeLabels = { heading: 'Titre', text: 'Texte', link: 'Lien', bullets: 'Liste', separator: 'Séparateur' };
   /** Champs utiles par type : pilote l'affichage dans le script de la page. */
-  const fieldsFor = { heading: ['title'], text: ['content'], link: ['title', 'url'], bullets: ['content'] };
+  const fieldsFor = {
+    heading: ['title'],
+    text: ['content'],
+    link: ['title', 'url'],
+    bullets: ['content'],
+    separator: [],
+  };
+  /** Délimiteurs de la barre d'outils markdown, insérés autour de la sélection. */
+  const mdTools = [
+    { key: 'bold', open: '**', close: '**', label: 'G', title: 'Gras (Ctrl+B)' },
+    { key: 'italic', open: '*', close: '*', label: 'I', title: 'Italique (Ctrl+I)' },
+    { key: 'underline', open: '__', close: '__', label: 'S', title: 'Souligné' },
+    { key: 'strike', open: '~~', close: '~~', label: 'K', title: 'Barré' },
+  ];
 %>
 
-<section class="card" style="margin-top: 1rem;">
-  <div class="doc-block-list" id="doc-block-list">
+<section class="doc-editor-section" style="margin-top: 1rem;">
+  <%
+    /**
+     * Les champs d'un bloc ne sont que normalisés côté serveur : `cleanText`
+     * ne retire pas le HTML. Comme ce rendu est assemblé ici, tout ce qui
+     * n'est pas du markdown doit donc être échappé explicitement, sinon un
+     * titre deviendrait du balisage. Le contenu Markdown, lui, arrive déjà
+     * échappé de `renderDiscordMarkdown`, qui est la seule source de HTML
+     * autorisé dans cette page.
+     */
+    const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    function escapeHtml(value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, (character) => HTML_ESCAPES[character]);
+    }
+
+    /**
+     * Rendu publié d'un bloc, sans aucun chrome d'édition. Partagé par la vue
+     * publique et par l'éditeur, pour qu'il n'y ait qu'une seule description du
+     * résultat final.
+     */
+    function renderBlockBody(block) {
+      if (block.type === 'heading') return `<h2 class="doc-heading">${escapeHtml(block.title)}</h2>`;
+      if (block.type === 'text') return renderDiscordMarkdown(block.content);
+      if (block.type === 'link') return `<p class="doc-text"><a class="doc-link" href="${escapeHtml(block.url)}" rel="noopener noreferrer" target="_blank">${escapeHtml(block.title || block.url)}</a></p>`;
+      if (block.type === 'bullets') return `<ul class="doc-bullets">${block.items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+      if (block.type === 'separator') return '<hr class="doc-separator">';
+      return '';
+    }
+  %>
+
+  <div class="doc-editor" id="doc-editor">
+    <% if (!blocks.length) { %>
+      <div class="empty-state">
+        <span class="empty-state-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4.5h9l3.5 3.5V20H6z"/><path d="M15 4.5V8h3.5M9 12.5h6M9 16h6"/></svg>
+        </span>
+        <p><% if (isFormManager) { %>La documentation est vide. Survolez la page pour insérer votre premier bloc.<% } else { %>Aucun contenu n’a encore été publié. Revenez plus tard.<% } %></p>
+      </div>
+    <% } %>
+
     <% blocks.forEach((block, index) => { %>
-      <article class="doc-block-card" data-tone="<%= block.tone %>" data-block-id="<%= block.id %>"<%= isFormManager ? ' draggable="true"' : '' %>>
-        <div class="doc-card-head">
-          <% if (isFormManager) { %>
-            <span class="doc-card-grip" title="Glisser pour réordonner" aria-hidden="true">
+      <div class="doc-row" data-block-id="<%= block.id %>" data-editing="false"<%= isFormManager ? ' draggable="true"' : '' %>>
+        <% if (isFormManager) { %>
+          <div class="doc-row-head">
+            <span class="doc-row-grip" title="Glisser pour réordonner" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01"/></svg>
             </span>
-          <% } %>
-          <span class="badge badge-<%= block.tone %>">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><%- iconPaths[block.icon] || iconPaths.text %></svg>
-            <%= block.typeLabel %>
-          </span>
-          <% if (isFormManager) { %>
-            <span class="question-index"><%= index + 1 %></span>
-            <div class="doc-card-actions">
-              <form action="/documentation/blocs/<%= block.id %>/deplacer" method="post">
-                <button type="submit" name="direction" value="up" class="icon-btn" title="Monter" aria-label="Monter ce bloc"<%= index === 0 ? ' disabled' : '' %>>▲</button>
-              </form>
-              <form action="/documentation/blocs/<%= block.id %>/deplacer" method="post">
-                <button type="submit" name="direction" value="down" class="icon-btn" title="Descendre" aria-label="Descendre ce bloc"<%= index === blocks.length - 1 ? ' disabled' : '' %>>▼</button>
-              </form>
+            <span class="badge badge-<%= block.tone %>">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><%- iconPaths[block.icon] || iconPaths.text %></svg>
+              <%= block.typeLabel %>
+            </span>
+            <div class="doc-row-actions">
+              <button type="button" class="icon-btn" data-action="edit" data-target="<%= block.id %>" title="Modifier" aria-label="Modifier ce bloc">✎</button>
               <form action="/documentation/blocs/<%= block.id %>/supprimer" method="post" data-confirm="Supprimer ce bloc ?">
                 <button type="submit" class="icon-btn icon-btn-danger" title="Supprimer le bloc" aria-label="Supprimer ce bloc">✕</button>
               </form>
             </div>
-          <% } %>
-        </div>
-
-        <div class="doc-card-preview">
-          <% if (block.type === 'heading') { %>
-            <h2 class="doc-heading"><%= block.title %></h2>
-          <% } else if (block.type === 'text') { %>
-            <p class="doc-text"><%= block.content %></p>
-          <% } else if (block.type === 'link') { %>
-            <p class="doc-text">
-              <a class="doc-link" href="<%= block.url %>" rel="noopener noreferrer" target="_blank"><%= block.title || block.url %></a>
-            </p>
-          <% } else if (block.type === 'bullets') { %>
-            <ul class="doc-bullets">
-              <% block.items.forEach((item) => { %>
-                <li><%= item %></li>
-              <% }); %>
-            </ul>
-          <% } %>
-        </div>
-
-        <% if (isFormManager) { %>
-          <details class="doc-card-edit">
-            <summary>Modifier</summary>
-            <form action="/documentation/blocs/<%= block.id %>" method="post" class="doc-card-form" data-typed-form>
-              <div class="doc-type-picker" data-type-picker>
-                <% typeOrder.forEach((type) => { %>
-                  <button type="button" class="btn btn-outline btn-sm" data-type="<%= type %>" aria-pressed="<%= block.type === type %>"><%= typeLabels[type] %></button>
-                <% }); %>
-              </div>
-
-              <div class="field-block" data-legacy-type>
-                <label class="field-label" for="doc-type-<%= block.id %>">Type de bloc</label>
-                <select class="field-input" id="doc-type-<%= block.id %>" name="block_type">
-                  <% typeOrder.forEach((type) => { %>
-                    <option value="<%= type %>"<%= block.type === type ? ' selected' : '' %>><%= typeLabels[type] %></option>
-                  <% }); %>
-                </select>
-              </div>
-
-              <div class="field-block" data-field="title">
-                <label class="field-label" for="doc-title-<%= block.id %>">Libellé</label>
-                <input class="field-input" id="doc-title-<%= block.id %>" type="text" name="title" value="<%= block.title %>" maxlength="200" placeholder="Règlement intérieur">
-              </div>
-              <div class="field-block" data-field="content">
-                <label class="field-label" for="doc-content-<%= block.id %>">Contenu</label>
-                <p class="question-help">Pour une liste à puces, une ligne par élément.</p>
-                <textarea class="field-input" id="doc-content-<%= block.id %>" name="content" rows="4" maxlength="4000" placeholder="Texte du bloc…"><%= block.content %></textarea>
-              </div>
-              <div class="field-block" data-field="url">
-                <label class="field-label" for="doc-url-<%= block.id %>">URL</label>
-                <p class="question-help">Seuls les liens http:// et https:// sont acceptés.</p>
-                <input class="field-input" id="doc-url-<%= block.id %>" type="text" name="url" value="<%= block.url %>" maxlength="1024" placeholder="https://discord.com/channels/…">
-              </div>
-
-              <div class="row-aside" style="justify-content: flex-end;">
-                <button type="submit" class="btn btn-primary btn-sm">Enregistrer</button>
-              </div>
-            </form>
-          </details>
-        <% } %>
-      </article>
-    <% }); %>
-
-    <% if (!isFormManager && !blocks.length) { %>
-      <%# Lecteur sur une doc vide : un message, mais jamais la carte de
-          création, qui reste réservée à l'équipe Forms. %>
-      <article class="doc-block-card" data-tone="neutral">
-        <div class="empty-state">
-          <span class="empty-state-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4.5h9l3.5 3.5V20H6z"/><path d="M15 4.5V8h3.5M9 12.5h6M9 16h6"/></svg>
-          </span>
-          <p>Aucun contenu n’a encore été publié. Revenez plus tard.</p>
-        </div>
-      </article>
-    <% } %>
-
-    <% if (isFormManager) { %>
-      <%# Carte « en cours de création » : sur une doc vide elle est la première
-          et unique carte, donc l'endroit où cliquer est immédiat. %>
-      <article class="doc-block-card doc-new-card" data-tone="cyan" data-new-block>
-        <div class="doc-card-head">
-          <span class="badge badge-cyan">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-            Nouveau bloc
-          </span>
-        </div>
-
-        <% if (!blocks.length) { %>
-          <div class="empty-state">
-            <span class="empty-state-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4.5h9l3.5 3.5V20H6z"/><path d="M15 4.5V8h3.5M9 12.5h6M9 16h6"/></svg>
-            </span>
-            <p>La documentation est vide. Choisissez un type ci-dessous pour créer votre premier bloc.</p>
           </div>
         <% } %>
 
-        <details class="doc-card-edit" open>
-          <summary>Ajouter un bloc</summary>
-          <form action="/documentation/blocs" method="post" class="doc-card-form" data-typed-form>
-            <div class="doc-type-picker" data-type-picker>
-              <% typeOrder.forEach((type, position) => { %>
-                <button type="button" class="btn btn-outline btn-sm" data-type="<%= type %>" aria-pressed="<%= position === 1 %>"><%= typeLabels[type] %></button>
+        <div class="doc-row-body" data-doc-body><%- renderBlockBody(block) %></div>
+
+        <% if (isFormManager) { %>
+          <form class="doc-edit" action="/documentation/blocs/<%= block.id %>" method="post" data-doc-edit data-typed-form hidden>
+            <div class="doc-insert-picker" data-type-picker role="group" aria-label="Type de bloc">
+              <% typeOrder.forEach((type) => { %>
+                <button type="button" data-type="<%= type %>" aria-label="<%= typeLabels[type] %>" aria-pressed="<%= block.type === type %>" title="<%= typeLabels[type] %>"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><%- iconPaths[type] %></svg></button>
               <% }); %>
             </div>
 
             <div class="field-block" data-legacy-type>
-              <label class="field-label" for="doc-new-type">Type de bloc</label>
-              <select class="field-input" id="doc-new-type" name="block_type">
+              <label class="field-label" for="doc-type-<%= block.id %>">Type de bloc</label>
+              <select class="field-input" id="doc-type-<%= block.id %>" name="block_type">
                 <% typeOrder.forEach((type) => { %>
-                  <option value="<%= type %>"<%= type === 'text' ? ' selected' : '' %>><%= typeLabels[type] %></option>
+                  <option value="<%= type %>"<%= block.type === type ? ' selected' : '' %>><%= typeLabels[type] %></option>
                 <% }); %>
               </select>
             </div>
 
             <div class="field-block" data-field="title">
-              <label class="field-label" for="doc-new-title">Libellé</label>
-              <input class="field-input" id="doc-new-title" type="text" name="title" value="" maxlength="200" placeholder="Règlement intérieur">
+              <label class="field-label" for="doc-title-<%= block.id %>">Libellé</label>
+              <input class="field-input" id="doc-title-<%= block.id %>" type="text" name="title" value="<%= block.title %>" maxlength="200" placeholder="Règlement intérieur">
             </div>
             <div class="field-block" data-field="content">
-              <label class="field-label" for="doc-new-content">Contenu</label>
-              <p class="question-help">Pour une liste à puces, une ligne par élément.</p>
-              <textarea class="field-input" id="doc-new-content" name="content" rows="4" maxlength="4000" placeholder="Texte du bloc…&#10;Règle 1&#10;Règle 2"></textarea>
+              <label class="field-label" for="doc-content-<%= block.id %>">Contenu</label>
+              <div class="doc-toolbar" data-md-toolbar>
+                <% mdTools.forEach((tool) => { %>
+                  <button type="button" data-md="<%= tool.key %>" data-open="<%= tool.open %>" data-close="<%= tool.close %>" title="<%= tool.title %>" aria-label="<%= tool.title %>"><%= tool.label %></button>
+                <% }); %>
+              </div>
+              <textarea class="field-input" id="doc-content-<%= block.id %>" name="content" rows="6" maxlength="4000" placeholder="**Gras**, *italique*, `code`&#10;- une liste&#10;&gt; une citation" data-md-input><%= block.content %></textarea>
+              <p class="question-help">Markdown Discord : gras, italique, souligné, barré, code, listes, citations et liens.</p>
             </div>
             <div class="field-block" data-field="url">
-              <label class="field-label" for="doc-new-url">URL</label>
-              <p class="question-help">Seuls les liens http:// et https:// sont acceptés.</p>
-              <input class="field-input" id="doc-new-url" type="text" name="url" value="" maxlength="1024" placeholder="https://discord.com/channels/…">
+              <label class="field-label" for="doc-url-<%= block.id %>">URL</label>
+              <input class="field-input" id="doc-url-<%= block.id %>" type="text" name="url" value="<%= block.url %>" maxlength="1024" placeholder="https://discord.com/channels/…">
             </div>
 
-            <div class="row-aside" style="justify-content: flex-end;">
-              <button type="submit" class="btn btn-primary btn-sm">Ajouter le bloc</button>
+            <div class="doc-edit-actions">
+              <span class="question-help" style="margin-right: auto;">Ctrl+Entrée pour enregistrer, Échap pour annuler.</span>
+              <button type="button" class="btn btn-outline btn-sm" data-action="cancel" data-target="<%= block.id %>">Annuler</button>
+              <button type="submit" class="btn btn-primary btn-sm">Enregistrer</button>
             </div>
           </form>
-        </details>
-      </article>
+        <% } %>
+      </div>
+
+      <% if (isFormManager && index < blocks.length - 1) { %>
+        <%# Point d'insertion : `at` est le nombre de blocs déjà au-dessus, donc
+            l'emplacement exact demandé, pas une simple mise à la fin. Le dernier
+            point est rendu après la boucle pour éviter un doublon en bas. %>
+        <div class="doc-insert" data-insert>
+          <button type="button" class="doc-insert-btn" aria-expanded="false" aria-label="Insérer un bloc ici" title="Insérer un bloc ici">+</button>
+          <form action="/documentation/blocs" method="post" class="doc-insert-form" data-typed-form data-insert-form hidden>
+            <input type="hidden" name="at" value="<%= index + 1 %>">
+            <div class="doc-insert-picker" data-type-picker role="group" aria-label="Type du bloc à insérer">
+              <% typeOrder.forEach((type) => { %>
+                  <button type="button" data-type="<%= type %>" aria-label="<%= typeLabels[type] %>" aria-pressed="false" title="<%= typeLabels[type] %>"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><%- iconPaths[type] %></svg></button>
+              <% }); %>
+            </div>
+            <div class="field-block" data-legacy-type>
+              <label class="field-label">Type de bloc</label>
+              <select class="field-input" name="block_type">
+                <% typeOrder.forEach((type) => { %>
+                  <option value="<%= type %>"><%= typeLabels[type] %></option>
+                <% }); %>
+              </select>
+            </div>
+            <div class="doc-insert-fields" data-insert-details hidden>
+              <div class="field-block" data-field="title">
+                <label class="field-label">Libellé</label>
+                <input class="field-input" type="text" name="title" maxlength="200" placeholder="Règlement intérieur">
+              </div>
+              <div class="field-block" data-field="content">
+                <label class="field-label">Contenu</label>
+                <textarea class="field-input" name="content" rows="4" maxlength="4000" placeholder="**Gras**, *italique*, `code`&#10;- une liste"></textarea>
+              </div>
+              <div class="field-block" data-field="url">
+                <label class="field-label">URL</label>
+                <input class="field-input" type="text" name="url" maxlength="1024" placeholder="https://discord.com/channels/…">
+              </div>
+              <div class="doc-edit-actions">
+                <button type="button" class="btn btn-outline btn-sm" data-action="close-insert">Annuler</button>
+                <button type="submit" class="btn btn-primary btn-sm">Ajouter ici</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      <% } %>
+    <% }); %>
+
+    <% if (isFormManager) { %>
+      <%# Dernier emplacement : après le dernier bloc. %>
+      <div class="doc-insert" data-insert>
+        <button type="button" class="doc-insert-btn" aria-expanded="false" aria-label="Insérer un bloc ici" title="Insérer un bloc ici">+</button>
+        <form action="/documentation/blocs" method="post" class="doc-insert-form" data-typed-form data-insert-form hidden>
+          <input type="hidden" name="at" value="<%= blocks.length %>">
+          <div class="doc-insert-picker" data-type-picker role="group" aria-label="Type du bloc à insérer">
+            <% typeOrder.forEach((type) => { %>
+              <button type="button" data-type="<%= type %>" aria-label="<%= typeLabels[type] %>" aria-pressed="false" title="<%= typeLabels[type] %>"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><%- iconPaths[type] %></svg></button>
+            <% }); %>
+          </div>
+          <div class="field-block" data-legacy-type>
+            <label class="field-label">Type de bloc</label>
+            <select class="field-input" name="block_type">
+              <% typeOrder.forEach((type) => { %>
+                <option value="<%= type %>"><%= typeLabels[type] %></option>
+              <% }); %>
+            </select>
+          </div>
+          <div class="doc-insert-fields" data-insert-details hidden>
+            <div class="field-block" data-field="title">
+              <label class="field-label">Libellé</label>
+              <input class="field-input" type="text" name="title" maxlength="200" placeholder="Règlement intérieur">
+            </div>
+            <div class="field-block" data-field="content">
+              <label class="field-label">Contenu</label>
+              <textarea class="field-input" name="content" rows="4" maxlength="4000" placeholder="**Gras**, *italique*, `code`&#10;- une liste"></textarea>
+            </div>
+            <div class="field-block" data-field="url">
+              <label class="field-label">URL</label>
+              <input class="field-input" type="text" name="url" maxlength="1024" placeholder="https://discord.com/channels/…">
+            </div>
+            <div class="doc-edit-actions">
+              <button type="button" class="btn btn-outline btn-sm" data-action="close-insert">Annuler</button>
+              <button type="submit" class="btn btn-primary btn-sm">Ajouter ici</button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <%# Sans JavaScript, seul le glisser-déposer disparaît : on rend les
+          boutons de déplacement, que le script ne montre jamais. %>
+      <noscript>
+        <div class="doc-noscript">
+          <p class="question-help">Sans JavaScript, déplacez les blocs avec ces boutons.</p>
+          <% blocks.forEach((block, index) => { %>
+            <div class="doc-noscript-row">
+              <span class="muted">Bloc <%= index + 1 %></span>
+              <form action="/documentation/blocs/<%= block.id %>/deplacer" method="post">
+                <input type="hidden" name="direction" value="up">
+                <button type="submit" class="icon-btn" title="Monter" aria-label="Monter ce bloc"<%= index === 0 ? ' disabled' : '' %>>▲</button>
+              </form>
+              <form action="/documentation/blocs/<%= block.id %>/deplacer" method="post">
+                <input type="hidden" name="direction" value="down">
+                <button type="submit" class="icon-btn" title="Descendre" aria-label="Descendre ce bloc"<%= index === blocks.length - 1 ? ' disabled' : '' %>>▼</button>
+              </form>
+            </div>
+          <% }); %>
+        </div>
+      </noscript>
 
       <%# Un seul POST à la fin du glisser-déposer, pas un rechargement par étape. %>
       <form action="/documentation/blocs/reordonner" method="post" id="doc-reorder-form" hidden>
@@ -204,8 +270,8 @@
 <% if (isFormManager) { %>
   <script>
     (function () {
-      var list = document.getElementById('doc-block-list');
-      if (!list) return;
+      var editor = document.getElementById('doc-editor');
+      if (!editor) return;
 
       /* ---- Choix du type : seuls les champs utiles restent visibles -------
          Le <select> reste la seule source de vérité pour `block_type` : sans
@@ -230,9 +296,20 @@
             input.disabled = !shown;
           });
         });
+        var insertionDetails = form.querySelector('[data-insert-details]');
+        if (insertionDetails) insertionDetails.hidden = !visible.length;
+        return visible;
       }
 
-      list.querySelectorAll('[data-typed-form]').forEach(function (form) {
+      function firstVisibleField(form, fields) {
+        for (var i = 0; i < fields.length; i += 1) {
+          var field = form.querySelector('[data-field="' + fields[i] + '"] input, [data-field="' + fields[i] + '"] textarea');
+          if (field) return field;
+        }
+        return null;
+      }
+
+      editor.querySelectorAll('[data-typed-form]').forEach(function (form) {
         var legacy = form.querySelector('[data-legacy-type]');
         if (legacy) legacy.hidden = true;
         form.querySelectorAll('[data-type-picker] button').forEach(function (button) {
@@ -243,7 +320,150 @@
         var select = form.querySelector('select[name="block_type"]');
         if (select) {
           select.addEventListener('change', function () { applyType(form, select.value); });
-          applyType(form, select.value);
+          if (form.hasAttribute('data-insert-form')) {
+            // Ouvrir un point d'insertion ne révèle que les cinq types. Les
+            // champs et l'action restent cachés jusqu'au choix d'un type.
+            var insertionDetails = form.querySelector('[data-insert-details]');
+            if (insertionDetails) insertionDetails.hidden = true;
+            form.querySelectorAll('[data-field] input, [data-field] textarea').forEach(function (input) {
+              input.disabled = true;
+            });
+          } else {
+            applyType(form, select.value);
+          }
+        }
+      });
+
+      /* ---- Points d'insertion ------------------------------------------- */
+      function closeInserts(except) {
+        editor.querySelectorAll('[data-insert]').forEach(function (point) {
+          if (point === except) return;
+          var form = point.querySelector('[data-insert-form]');
+          var button = point.querySelector('.doc-insert-btn');
+          if (form) form.hidden = true;
+          if (button) button.setAttribute('aria-expanded', 'false');
+        });
+      }
+
+      editor.querySelectorAll('[data-insert]').forEach(function (point) {
+        var button = point.querySelector('.doc-insert-btn');
+        var form = point.querySelector('[data-insert-form]');
+        if (!button || !form) return;
+
+        button.addEventListener('click', function () {
+          var willOpen = form.hidden;
+          closeInserts(point);
+          form.hidden = !willOpen;
+          button.setAttribute('aria-expanded', String(willOpen));
+          if (willOpen) {
+            var firstChoice = form.querySelector('[data-type-picker] button');
+            if (firstChoice) firstChoice.focus();
+          }
+        });
+
+        // Choisir une icône remplit le type ; le séparateur part aussitôt.
+        form.querySelectorAll('[data-type-picker] button').forEach(function (typeButton) {
+          typeButton.addEventListener('click', function () {
+            var type = typeButton.getAttribute('data-type');
+            // L'écouteur générique met à jour le select et les champs avant
+            // que cet écouteur place le focus ou insère un séparateur.
+            var fields = fieldsFor[type] || [];
+            if (!fields.length) {
+              form.submit();
+              return;
+            }
+            var target = firstVisibleField(form, fields);
+            if (target) target.focus();
+          });
+        });
+      });
+
+      editor.addEventListener('click', function (event) {
+        var close = event.target.closest('[data-action="close-insert"]');
+        if (close) {
+          var openForm = close.closest('[data-insert-form]');
+          if (openForm) openForm.hidden = true;
+          var trigger = close.closest('[data-insert]');
+          if (trigger) {
+            var triggerButton = trigger.querySelector('.doc-insert-btn');
+            if (triggerButton) triggerButton.setAttribute('aria-expanded', 'false');
+          }
+        }
+      });
+
+      /* ---- Édition en place --------------------------------------------- */
+      function openEditor(row) {
+        row.dataset.editing = 'true';
+        var form = row.querySelector('[data-doc-edit]');
+        form.hidden = false;
+        var type = form.querySelector('select[name="block_type"]').value;
+        var fields = applyType(form, type);
+        var target = firstVisibleField(form, fields);
+        if (target) {
+          target.focus();
+          target.setSelectionRange(target.value.length, target.value.length);
+        }
+      }
+
+      function closeEditor(row) {
+        row.dataset.editing = 'false';
+        row.querySelector('[data-doc-edit]').hidden = true;
+      }
+
+      function rowFor(element) {
+        return element.closest ? element.closest('.doc-row') : null;
+      }
+
+      editor.addEventListener('click', function (event) {
+        var action = event.target.closest('[data-action]');
+        if (!action) return;
+        var row = rowFor(action);
+        if (!row) return;
+
+        if (action.getAttribute('data-action') === 'edit') openEditor(row);
+        else if (action.getAttribute('data-action') === 'cancel') closeEditor(row);
+      });
+
+      /* ---- Barre markdown : entoure la sélection -------------------------
+         On n'utilise ni l'ancienne API de sélection, qui est dépréciée, ni
+         le presse-papiers, qui refuse une sélection arbitraire : on écrit dans
+         la value puis on replace le focus et la sélection. */
+      function surround(area, open, close) {
+        var start = area.selectionStart;
+        var end = area.selectionEnd;
+        var selected = area.value.slice(start, end);
+        area.value = area.value.slice(0, start) + open + selected + close + area.value.slice(end);
+        var caret = start + open.length;
+        area.focus();
+        area.setSelectionRange(caret, caret + selected.length);
+      }
+
+      editor.querySelectorAll('[data-md-toolbar]').forEach(function (toolbar) {
+        toolbar.querySelectorAll('[data-md]').forEach(function (button) {
+          button.addEventListener('mousedown', function (event) {
+            // Le clic ne doit pas voler le focus du textarea avant le wrap.
+            event.preventDefault();
+            var area = toolbar.parentElement.querySelector('[data-md-input]');
+            if (area) surround(area, button.getAttribute('data-open'), button.getAttribute('data-close'));
+          });
+        });
+      });
+
+      /* ---- Raccourcis : Ctrl+Entrée enregistre, Échap annule -------------- */
+      editor.addEventListener('keydown', function (event) {
+        var row = rowFor(event.target);
+        if (!row) return;
+        var form = row.querySelector('[data-doc-edit]');
+        if (!form || form.hidden) return;
+
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeEditor(row);
+          return;
+        }
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+          form.requestSubmit ? form.requestSubmit() : form.submit();
         }
       });
 
@@ -252,65 +472,49 @@
       if (!reorderForm) return;
       var dragged = null;
 
-      function cardOf(node) {
-        return node && node.closest ? node.closest('.doc-block-card[data-block-id]') : null;
+      function rowOf(node) {
+        return node && node.closest ? node.closest('.doc-row[data-block-id]') : null;
       }
 
-      /* L'ordre du DOM fait foi : la numérotation et les bornes des boutons ▲▼
-         sont recalculées avant l'envoi, pour que le repli sans JavaScript reste
-         exact même après un glisser-déposer. */
-      function renumber() {
-        var cards = list.querySelectorAll('.doc-block-card[data-block-id]');
-        cards.forEach(function (card, index) {
-          var label = card.querySelector('.question-index');
-          if (label) label.textContent = String(index + 1);
-          var up = card.querySelector('button[value="up"]');
-          var down = card.querySelector('button[value="down"]');
-          if (up) up.disabled = index === 0;
-          if (down) down.disabled = index === cards.length - 1;
-        });
-      }
-
-      list.addEventListener('dragstart', function (event) {
-        var card = cardOf(event.target);
-        if (!card) return;
-        dragged = card;
-        card.classList.add('is-dragging');
+      editor.addEventListener('dragstart', function (event) {
+        var row = rowOf(event.target);
+        if (!row) return;
+        dragged = row;
+        row.classList.add('is-dragging');
         event.dataTransfer.effectAllowed = 'move';
         // Obligatoire sur Firefox, qui refuse de démarrer un drag sans payload.
         try { event.dataTransfer.setData('text/plain', ''); } catch (error) {}
       });
 
-      list.addEventListener('dragover', function (event) {
+      editor.addEventListener('dragover', function (event) {
         if (!dragged) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = 'move';
-        var target = cardOf(event.target);
+        var target = rowOf(event.target);
         if (!target || target === dragged) return;
         var box = target.getBoundingClientRect();
         var after = (event.clientY - box.top) > box.height / 2;
-        list.insertBefore(dragged, after ? target.nextSibling : target);
+        editor.insertBefore(dragged, after ? target.nextSibling : target);
       });
 
-      list.addEventListener('drop', function (event) {
+      editor.addEventListener('drop', function (event) {
         if (!dragged) return;
         event.preventDefault();
       });
 
-      list.addEventListener('dragend', function () {
+      editor.addEventListener('dragend', function () {
         if (!dragged) return;
         dragged.classList.remove('is-dragging');
         dragged = null;
-        renumber();
 
         // Un seul envoi, avec l'ordre complet lu dans le DOM.
         var holder = document.getElementById('doc-reorder-ids');
         holder.textContent = '';
-        list.querySelectorAll('.doc-block-card[data-block-id]').forEach(function (card) {
+        editor.querySelectorAll('.doc-row[data-block-id]').forEach(function (row) {
           var input = document.createElement('input');
           input.type = 'hidden';
           input.name = 'block_id';
-          input.value = card.getAttribute('data-block-id');
+          input.value = row.getAttribute('data-block-id');
           holder.appendChild(input);
         });
         reorderForm.submit();

@@ -28,7 +28,10 @@
       <img class="hero-avatar" src="<%= greetingAvatar %>" alt="Avatar de <%= greetingName %>">
       <div>
         <p class="eyebrow">Espace membre</p>
-        <h1 class="hero-title">Bonjour, <%= greetingName %></h1>
+        <%# L'heure du navigateur est plus fiable que celle du serveur (Render
+            tourne en UTC) : le script du layout réécrit ce titre avec la bonne
+            tranche. Le rendu ci-dessous reste le repli sans JavaScript. %>
+        <h1 class="hero-title" id="dashboard-greeting" data-name="<%= greetingName %>">Bonjour, <%= greetingName %></h1>
         <% if (linkedAccount) { %>
           <p class="hero-note">Votre compte Roblox est lié à Discord. Retrouvez votre fiche et les grades détectés sur votre profil.</p>
         <% } else { %>

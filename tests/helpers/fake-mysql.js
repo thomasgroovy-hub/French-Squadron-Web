@@ -316,12 +316,37 @@ class FakeMysqlPool {
       return [{ affectedRows: 1 }];
     }
 
-    if (/^UPDATE documentation_blocks SET position/i.test(sql)) {
+    if (/^UPDATE documentation_blocks SET position = \? WHERE id = \?/i.test(sql)) {
       const [position, blockId] = params;
       const row = this.store.documentationBlocks.find((b) => b.id === Number(blockId));
       if (!row) return [{ affectedRows: 0 }];
       row.position = position;
       return [{ affectedRows: 1 }];
+    }
+
+    if (/^UPDATE documentation_blocks SET position = position \+ 1 WHERE position >= \?/i.test(sql)) {
+      const [from] = params;
+      let affected = 0;
+      for (const row of this.store.documentationBlocks) {
+        if (row.position >= Number(from)) {
+          row.position += 1;
+          affected += 1;
+        }
+      }
+      return [{ affectedRows: affected }];
+    }
+
+    if (/^SHOW COLUMNS FROM documentation_blocks/i.test(sql)) {
+      // Mirrors a table created before the 'separator' type existed, so the
+      // widening migration has something to fix.
+      return [[{
+        Field: 'block_type',
+        Type: "enum('heading','text','link','bullets')",
+      }]];
+    }
+
+    if (/^ALTER TABLE documentation_blocks\s+MODIFY COLUMN block_type/i.test(sql)) {
+      return [[]];
     }
 
     if (/^DELETE FROM documentation_blocks WHERE id/i.test(sql)) {

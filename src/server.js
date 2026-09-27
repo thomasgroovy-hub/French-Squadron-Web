@@ -9,6 +9,7 @@ import { createMainRouter } from './routes/index.js';
 import { createPermadeathRouter } from './routes/permadeath.js';
 
 import { getDatabasePool, getSiteDatabasePool, findMissingEnv } from './database.js';
+import { renderDiscordMarkdown } from './utils/discord-markdown.js';
 import { printVersionBanner } from './version.js';
 
 const SITE_DATABASE_VARS = ['SITE_MYSQL_HOST', 'SITE_MYSQL_USER', 'SITE_MYSQL_PASSWORD', 'SITE_MYSQL_DATABASE'];
@@ -30,6 +31,10 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
   // Configuration du moteur de vues EJS
   app.set('views', path.join(__dirname, 'views'));
   app.set('view engine', 'ejs');
+
+  // Markdown helper, shared by every view. The function escapes the text it is
+  // given, so views must print its result unescaped.
+  app.locals.renderDiscordMarkdown = renderDiscordMarkdown;
 
   // Middleware pour envelopper automatiquement les vues dans layout.ejs
   app.use((req, res, next) => {

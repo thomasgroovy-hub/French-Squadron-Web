@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { sealSession } from '../src/auth/session.js';
-import { DOC_BLOCK_TYPES, reorderDocumentationBlocks } from '../src/services/documentation.js';
+import { DOC_BLOCK_TYPES, ensureDocumentationTables, reorderDocumentationBlocks } from '../src/services/documentation.js';
 import { createApp } from '../src/server.js';
 import { webConfig } from '../src/config.js';
 import { createFakePool } from './helpers/fake-mysql.js';
@@ -251,7 +251,7 @@ test('the move route is refused without the forms role', async () => {
 
 // ------------------------------------------------------------- create / update still work
 
-test('a manager still creates a block from the card form', async () => {
+test('a manager can create a block from an insertion form', async () => {
   const pool = createFakePool();
   const { port, close } = await startServer({ pool });
 
@@ -266,6 +266,41 @@ test('a manager still creates a block from the card form', async () => {
   assert.equal(block.block_type, 'bullets');
   assert.equal(block.content, 'Règle 1\nRègle 2');
   assert.equal(block.position, 0);
+  await close();
+});
+
+test('the documentation schema widens its block type ENUM to include separators', async () => {
+  const pool = createFakePool();
+  // Give the pool a unique schema identity so the service's per-database
+  // initialization cache cannot inherit another test's bootstrap.
+  pool.config = { host: 'test-host', database: 'documentation-enum-migration' };
+
+  await ensureDocumentationTables(pool);
+  await ensureDocumentationTables(pool);
+
+  const create = pool.log.find(({ sql }) => /^CREATE TABLE IF NOT EXISTS documentation_blocks/i.test(sql));
+  const migration = pool.log.filter(({ sql }) => /^ALTER TABLE documentation_blocks\s+MODIFY COLUMN block_type/i.test(sql));
+  assert.ok(create);
+  assert.match(create.sql, /ENUM\('heading', 'text', 'link', 'bullets', 'separator'\)/);
+  assert.equal(migration.length, 1, 'the stale enum is widened once for this database');
+  assert.match(migration[0].sql, /ENUM\('heading', 'text', 'link', 'bullets', 'separator'\)/);
+});
+
+test('a manager can insert a separator between existing blocks at the requested slot', async () => {
+  const pool = createFakePool();
+  const { port, close } = await startServer({ pool });
+
+  const first = await post(port, '/documentation/blocs', { block_type: DOC_BLOCK_TYPES.HEADING, title: 'Début', at: '0' });
+  const second = await post(port, '/documentation/blocs', { block_type: DOC_BLOCK_TYPES.TEXT, content: 'Suite', at: '1' });
+  const separator = await post(port, '/documentation/blocs', { block_type: DOC_BLOCK_TYPES.SEPARATOR, at: '1' });
+
+  assert.equal(first.status, 302);
+  assert.equal(second.status, 302);
+  assert.equal(separator.status, 302);
+  assert.deepEqual(
+    published(pool).map(([id, position]) => [pool.store.documentationBlocks.find((block) => block.id === id).block_type, position]),
+    [['heading', 0], ['separator', 1], ['text', 2]],
+  );
   await close();
 });
 
@@ -285,11 +320,12 @@ test('a manager still edits a block in place, keeping its position', async () =>
   await close();
 });
 
-test('a reader sees the published blocks but no management panel', async () => {
+test('a reader sees the published blocks without editing controls', async () => {
   const pool = createFakePool();
   pool.store.documentationBlocks = [
     { id: 1, position: 0, block_type: 'heading', title: 'Règlement', content: '', url: '' },
     { id: 2, position: 1, block_type: 'bullets', title: '', content: 'a\nb', url: '' },
+    { id: 3, position: 2, block_type: 'separator', title: '', content: '', url: '' },
   ];
   const { port, close } = await startServer({ pool });
 
@@ -298,19 +334,20 @@ test('a reader sees the published blocks but no management panel', async () => {
     redirect: 'manual',
   });
   const html = await res.text();
+  const body = html.match(/<main class="container">([\s\S]*?)<\/main>/)?.[1] || '';
 
   assert.equal(res.status, 200);
-  assert.match(html, /<h2 class="doc-heading">Règlement<\/h2>/);
-  assert.match(html, /<li>a<\/li>/);
-  // On the markup, not on the class name: the shared stylesheet always ships
-  // `.doc-new-card`, so only the rendered attribute proves it is absent.
-  assert.doesNotMatch(html, /class="doc-block-card doc-new-card"/);
-  assert.doesNotMatch(html, /id="doc-reorder-form"/);
-  assert.doesNotMatch(html, /\/documentation\/blocs/);
+  assert.match(body, /<h2 class="doc-heading">Règlement<\/h2>/);
+  assert.match(body, /<li>a<\/li>/);
+  assert.match(body, /<hr class="doc-separator">/);
+  assert.doesNotMatch(body, /class="doc-edit"|data-insert|draggable="true"/);
+  assert.doesNotMatch(body, /id="doc-reorder-form"/);
+  assert.doesNotMatch(body, /\/documentation\/blocs/);
+  assert.doesNotMatch(body, /<details/);
   await close();
 });
 
-test('a reader on an empty documentation is told so, without a creation card', async () => {
+test('a reader on an empty documentation gets the empty state without insertion controls', async () => {
   const pool = createFakePool();
   const { port, close } = await startServer({ pool });
 
@@ -319,9 +356,11 @@ test('a reader on an empty documentation is told so, without a creation card', a
     redirect: 'manual',
   });
   const html = await res.text();
+  const body = html.match(/<main class="container">([\s\S]*?)<\/main>/)?.[1] || '';
 
   assert.equal(res.status, 200);
-  assert.match(html, /Aucun contenu n/);
-  assert.doesNotMatch(html, /class="doc-block-card doc-new-card"/);
+  assert.match(body, /Aucun contenu n/);
+  assert.doesNotMatch(body, /data-insert|class="doc-edit"|doc-reorder-form/);
+  assert.doesNotMatch(body, /\/documentation\/blocs/);
   await close();
 });

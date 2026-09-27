@@ -1,0 +1,14 @@
+﻿import fs from "node:fs";
+import path from "node:path";
+const views = path.join(process.cwd(), "src", "views");
+const layoutSrc = fs.readFileSync(path.join(views, "layout.ejs"), "utf8");
+const docSrc = fs.readFileSync(path.join(views, "documentation.ejs"), "utf8");
+const m = layoutSrc.match(/<%# TODO: remplacer par l'URL du groupe Roblox %>/);
+console.log("layout source has TODO:", Boolean(m));
+console.log("layout source has escapes\\r\\n:", layoutSrc.includes("\r\n"));
+const idx = layoutSrc.indexOf("TODO: remplacer");
+console.log("bytes around TODO:", JSON.stringify(layoutSrc.slice(idx - 12, idx + 50)));
+console.log("--- data-typed-form occurrences in documentation.ejs:");
+console.log("form-tag regex  :", (docSrc.match(/<form[^>]*data-typed-form/g) || []).length);
+console.log("any attribute   :", (docSrc.match(/data-typed-form/g) || []).length);
+console.log("select name=block_type:", (docSrc.match(/<select[^>]*name="block_type"/g) || []).length);

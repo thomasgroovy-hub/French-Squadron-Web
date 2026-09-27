@@ -18,6 +18,7 @@ const FIELD_LABELS = Object.freeze({
   [DOC_BLOCK_TYPES.TEXT]: { label: 'Bloc de texte', needsTitle: false, needsContent: true, needsUrl: false },
   [DOC_BLOCK_TYPES.LINK]: { label: 'Lien', needsTitle: true, needsContent: false, needsUrl: true },
   [DOC_BLOCK_TYPES.BULLETS]: { label: 'Liste à puces', needsTitle: false, needsContent: true, needsUrl: false },
+  [DOC_BLOCK_TYPES.SEPARATOR]: { label: 'Séparateur', needsTitle: false, needsContent: false, needsUrl: false },
 });
 
 const MAX_CONTENT_LENGTH = 4000;
@@ -84,6 +85,7 @@ const BLOCK_STYLES = Object.freeze({
   [DOC_BLOCK_TYPES.TEXT]: { tone: 'cyan', icon: 'text' },
   [DOC_BLOCK_TYPES.LINK]: { tone: 'success', icon: 'link' },
   [DOC_BLOCK_TYPES.BULLETS]: { tone: 'success', icon: 'bullets' },
+  [DOC_BLOCK_TYPES.SEPARATOR]: { tone: 'neutral', icon: 'separator' },
 });
 
 /**
@@ -102,6 +104,7 @@ export function createDocumentationRouter({ pool } = {}) {
       [DOC_BLOCK_TYPES.TEXT]: 'Texte',
       [DOC_BLOCK_TYPES.LINK]: 'Lien',
       [DOC_BLOCK_TYPES.BULLETS]: 'Liste à puces',
+      [DOC_BLOCK_TYPES.SEPARATOR]: 'Séparateur',
     };
     const items = block.blockType === DOC_BLOCK_TYPES.BULLETS ? toBulletItems(block.content) : [];
     const preview = block.blockType === DOC_BLOCK_TYPES.BULLETS
@@ -148,7 +151,14 @@ export function createDocumentationRouter({ pool } = {}) {
     if (!error) {
       try {
         await ensureDocumentationTables(pool);
-        await createDocumentationBlock({ ...input, pool });
+        // `at` is the slot the insertion point asked for, counted from the top.
+        // Anything else appends at the end, like the old bottom-of-page form.
+        const requestedSlot = Number.parseInt(req.body?.at, 10);
+        await createDocumentationBlock({
+          ...input,
+          index: Number.isInteger(requestedSlot) && requestedSlot >= 0 ? requestedSlot : null,
+          pool,
+        });
         return res.redirect('/documentation?info=' + encodeURIComponent('Bloc ajouté.'));
       } catch (creationError) {
         console.error('[WebRoutes] Error creating documentation block:', creationError);
