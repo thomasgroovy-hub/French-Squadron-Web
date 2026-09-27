@@ -192,6 +192,35 @@ export async function fetchSiteUsers(search = '', pool = getDatabasePool()) {
   }
 }
 
+/**
+ * Batch lookup of the Discord identities behind a list of user ids.
+ *
+ * The response inbox needs a name, a display name and an avatar for every row
+ * it renders. Resolving them one by one turns a single page into dozens of
+ * queries, so they are fetched in a single `IN (...)` read and returned as a
+ * Map keyed by Discord id.
+ *
+ * Returns an empty Map on any failure: a missing identity must degrade to a
+ * fallback in the view, never take the whole page down.
+ */
+export async function fetchSiteUsersByIds(discordUserIds = [], pool = getDatabasePool()) {
+  const ids = [...new Set(discordUserIds)].filter(Boolean);
+  if (!pool || !ids.length) return new Map();
+  try {
+    await ensureSiteUsersTable(pool);
+    const placeholders = ids.map(() => '?').join(', ');
+    const [rows] = await pool.execute(
+      `SELECT discord_user_id, discord_username, global_name, avatar_url
+       FROM site_users WHERE discord_user_id IN (${placeholders})`,
+      ids,
+    );
+    return new Map(rows.map((row) => [row.discord_user_id, row]));
+  } catch (error) {
+    console.error('[MembersService] Unable to batch-fetch site users:', error.message);
+    return new Map();
+  }
+}
+
 export async function fetchSiteUser(discordUserId, pool = getDatabasePool()) {
   if (!pool || !discordUserId) return null;
   try {

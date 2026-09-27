@@ -11,6 +11,7 @@ import {
   getResponseById,
   updateResponseStatus,
   RESPONSE_STATUS,
+  FIELD_TYPE_VALUES,
 } from '../src/services/forms.js';
 
 /**
@@ -55,6 +56,106 @@ test('table bootstrap creates the three forms tables', async () => {
   assert.match(created, /answers JSON NOT NULL/);
   // Deleting a form must take its questions and responses with it.
   assert.match(created, /ON DELETE CASCADE/);
+  // Every field type the builder can post must be accepted by the schema.
+  const questionTable = created.split('form_questions')[1] || '';
+  for (const fieldType of ['short', 'long', 'choice_single', 'choice_multiple', 'date']) {
+    assert.match(questionTable, new RegExp(`'${fieldType}'`), `le type ${fieldType} doit exister`);
+  }
+  assert.match(questionTable, /options TEXT NULL/);
+});
+
+/**
+ * `ensureFormsTables` memoises its bootstrap per database, so a test that needs
+ * to observe the statements must claim its own database identity.
+ */
+function poolWithIdentity(identity, execute) {
+  return { config: { host: identity, database: identity }, execute };
+}
+
+test('an existing table gains the options column on the next boot', async () => {
+  const statements = [];
+  const pool = poolWithIdentity('migration-host', async (query) => {
+    const sql = query.replace(/\s+/g, ' ').trim();
+    statements.push({ sql });
+    if (/^CREATE TABLE/i.test(sql)) return [[]];
+    // Simulates a table created before the column existed.
+    if (/^SHOW COLUMNS FROM form_questions/i.test(sql)) {
+      return [[{ Field: 'id' }, { Field: 'field_type' }]];
+    }
+    return [{ affectedRows: 0 }];
+  });
+
+  await ensureFormsTables(pool);
+
+  assert.ok(
+    statements.some((entry) => /^ALTER TABLE form_questions ADD COLUMN options/i.test(entry.sql)),
+    'la colonne options est ajoutée sans étape de migration manuelle',
+  );
+});
+
+test('a table that already has the options column is left alone', async () => {
+  const statements = [];
+  const pool = poolWithIdentity('no-migration-host', async (query) => {
+    const sql = query.replace(/\s+/g, ' ').trim();
+    statements.push({ sql });
+    if (/^CREATE TABLE/i.test(sql)) return [[]];
+    if (/^SHOW COLUMNS FROM form_questions/i.test(sql)) {
+      return [[
+        { Field: 'id' },
+        { Field: 'field_type', Type: "enum('short','long','choice_single','choice_multiple','date')" },
+        { Field: 'options' },
+      ]];
+    }
+    return [{ affectedRows: 0 }];
+  });
+
+  await ensureFormsTables(pool);
+
+  assert.equal(
+    statements.filter((entry) => /^ALTER TABLE/i.test(entry.sql)).length,
+    0,
+    'aucun ALTER inutile',
+  );
+});
+
+test('an ENUM left on the old field types is widened on the next boot', async () => {
+  const statements = [];
+  const pool = poolWithIdentity('legacy-enum-host', async (query) => {
+    const sql = query.replace(/\s+/g, ' ').trim();
+    statements.push({ sql });
+    if (/^CREATE TABLE/i.test(sql)) return [[]];
+    // Table created before the new types: only `short` and `long` existed.
+    if (/^SHOW COLUMNS FROM form_questions/i.test(sql)) {
+      return [[
+        { Field: 'id' },
+        { Field: 'field_type', Type: "enum('short','long')" },
+        { Field: 'options' },
+      ]];
+    }
+    return [{ affectedRows: 0 }];
+  });
+
+  await ensureFormsTables(pool);
+
+  const widen = statements.find((entry) => /^ALTER TABLE form_questions MODIFY COLUMN field_type/i.test(entry.sql));
+  assert.ok(widen, 'l’ENUM est élargi sans étape de migration manuelle');
+  for (const type of FIELD_TYPE_VALUES) {
+    assert.ok(widen.sql.includes(`'${type}'`), `l’ENUM accepte ${type}`);
+  }
+  // Widening must not drop the values already stored.
+  assert.ok(widen.sql.includes("'short'"));
+  assert.ok(widen.sql.includes("'long'"));
+});
+
+test('a pool that cannot report its columns does not block the bootstrap', async () => {
+  const pool = poolWithIdentity('unreadable-host', async (query) => {
+    const sql = query.replace(/\s+/g, ' ').trim();
+    if (/^CREATE TABLE/i.test(sql)) return [[]];
+    if (/^SHOW COLUMNS/i.test(sql)) return [undefined];
+    return [{ affectedRows: 0 }];
+  });
+
+  await assert.doesNotReject(() => ensureFormsTables(pool));
 });
 
 test('updateForm keeps the id of questions that are still present', async () => {
@@ -84,8 +185,12 @@ test('updateForm keeps the id of questions that are still present', async () => 
   assert.equal(updates.length, 2, 'both surviving questions are updated in place');
   assert.equal(inserts.length, 0, 'no question is re-inserted, so answer keys stay valid');
   assert.equal(deletes.length, 0, 'nothing is deleted when no question was removed');
-  assert.deepEqual(updates.map((entry) => entry.params[4]), [12, 11]);
+  // The id and the position are the last two bound values; `options` now sits
+  // between the field type and the id.
+  assert.deepEqual(updates.map((entry) => entry.params[entry.params.length - 2]), [12, 11]);
   assert.deepEqual(updates.map((entry) => entry.params[0]), [0, 1]);
+  // Free-text questions carry no options at all.
+  assert.deepEqual(updates.map((entry) => entry.params[4]), [null, null]);
 });
 
 test('updateForm deletes only the questions the creator actually removed', async () => {
@@ -131,7 +236,64 @@ test('updateForm appends brand new questions and keeps the existing ones', async
   assert.equal(pool.statements.filter((entry) => /^UPDATE form_questions/.test(entry.sql)).length, 1);
   const inserts = pool.statements.filter((entry) => /^INSERT INTO form_questions/.test(entry.sql));
   assert.equal(inserts.length, 1);
-  assert.deepEqual(inserts[0].params, [5, 1, 'Expérience', null, 'long']);
+  assert.deepEqual(inserts[0].params, [5, 1, 'Expérience', null, 'long', null]);
+});
+
+test('a multiple-choice question stores its options as a JSON array', async () => {
+  const pool = recordingPool({ rows: () => [{ id: 11 }], insertId: 99 });
+
+  await updateForm({
+    formId: 5,
+    creatorDiscordId: 'manager-1',
+    title: 'Recrutement',
+    questions: [{
+      id: 11,
+      label: 'Langues parlées',
+      helpText: '',
+      fieldType: 'choice_multiple',
+      options: ['Français', 'Anglais'],
+    }],
+    pool,
+  });
+
+  const update = findStatement(pool, /^UPDATE form_questions/);
+  const options = JSON.parse(update.params[4]);
+  assert.deepEqual(options, ['Français', 'Anglais']);
+});
+
+test('options are dropped as soon as the question is no longer a choice', async () => {
+  const pool = recordingPool({ rows: () => [{ id: 11 }] });
+
+  await updateForm({
+    formId: 5,
+    creatorDiscordId: 'manager-1',
+    title: 'Recrutement',
+    questions: [{
+      id: 11,
+      label: 'Présentation',
+      helpText: '',
+      fieldType: 'long',
+      // The builder can still carry a stale group: it must not reach the column.
+      options: ['Français', 'Anglais'],
+    }],
+    pool,
+  });
+
+  assert.equal(findStatement(pool, /^UPDATE form_questions/).params[4], null);
+});
+
+test('an unknown field type degrades to a plain short answer', async () => {
+  const pool = recordingPool({ rows: () => [{ id: 11 }] });
+
+  await updateForm({
+    formId: 5,
+    creatorDiscordId: 'manager-1',
+    title: 'Recrutement',
+    questions: [{ id: 11, label: 'Pseudo', helpText: '', fieldType: 'scale_1_10', options: [] }],
+    pool,
+  });
+
+  assert.equal(findStatement(pool, /^UPDATE form_questions/).params[3], 'short');
 });
 
 test('publish cooldown is per creator and counts down from the last publication', async () => {

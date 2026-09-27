@@ -37,7 +37,15 @@
 <% } else { %>
   <form action="/candidatures/<%= form.id %>/reponses" method="post" class="stack" style="margin-top: 1rem;">
     <% form.questions.forEach((question, index) => { %>
-      <% const value = (answers && answers[String(question.id)]) || ''; %>
+      <%
+        const raw = answers && answers[String(question.id)];
+        // Un choix multiple est stocké comme un tableau : la vue doit donc lire
+        // les deux formes selon le type de la question.
+        const value = question.fieldType === 'choice_multiple'
+          ? (Array.isArray(raw) ? raw : [])
+          : (Array.isArray(raw) ? (raw[0] || '') : (raw || ''));
+        const options = Array.isArray(question.options) ? question.options : [];
+      %>
       <section class="card">
         <div class="question-head">
           <span class="question-index"><%= index + 1 %></span>
@@ -50,6 +58,26 @@
         </div>
         <% if (question.fieldType === 'long') { %>
           <textarea class="field-input" name="answer_<%= question.id %>" rows="6" placeholder="Votre réponse"><%= value %></textarea>
+        <% } else if (question.fieldType === 'date') { %>
+          <input class="field-input" type="date" name="answer_<%= question.id %>" value="<%= value %>">
+        <% } else if (question.fieldType === 'choice_single') { %>
+          <select class="field-input" name="answer_<%= question.id %>" required>
+            <option value="">Choisissez une réponse</option>
+            <% options.forEach((option) => { %>
+              <option value="<%= option %>" <%= value === option ? 'selected' : '' %>><%= option %></option>
+            <% }); %>
+          </select>
+        <% } else if (question.fieldType === 'choice_multiple') { %>
+          <%# Même `name` sur chaque case : le navigateur poste alors un tableau,
+              que le serveur range tel quel dans l'objet answers. %>
+          <ul class="choice-list">
+            <% options.forEach((option) => { %>
+              <li class="choice-item">
+                <input type="checkbox" id="answer_<%= question.id %>-<%= options.indexOf(option) %>" name="answer_<%= question.id %>" value="<%= option %>" <%= value.includes(option) ? 'checked' : '' %>>
+                <label for="answer_<%= question.id %>-<%= options.indexOf(option) %>"><%= option %></label>
+              </li>
+            <% }); %>
+          </ul>
         <% } else { %>
           <input class="field-input" type="text" name="answer_<%= question.id %>" value="<%= value %>" placeholder="Votre réponse" maxlength="4000">
         <% } %>

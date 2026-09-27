@@ -55,6 +55,21 @@ class FakeMysqlPool {
     if (/^CREATE TABLE/i.test(sql)) return [[]];
     if (/^ALTER TABLE/i.test(sql)) return [[]];
 
+    // The forms bootstrap inspects the columns of an already-created table to
+    // add `options` in place. The in-memory schema always has it.
+    if (/^SHOW COLUMNS FROM form_questions/i.test(sql)) {
+      const columns = [
+        { Field: 'id' },
+        { Field: 'form_id' },
+        { Field: 'position' },
+        { Field: 'label' },
+        { Field: 'help_text' },
+        { Field: 'field_type' },
+        { Field: 'options' },
+      ];
+      return [columns];
+    }
+
     // ------------------------------------------------------------------ forms
     if (/^INSERT INTO forms \(creator_discord_id, title, description, granted_role_id\)/i.test(sql)) {
       const [creator, title, description, grantedRoleId] = params;
@@ -145,11 +160,11 @@ class FakeMysqlPool {
     }
 
     // --------------------------------------------------------- form_questions
-    if (/^SELECT id, form_id, position, label, help_text, field_type FROM form_questions/i.test(sql)) {
+    if (/^SELECT id, form_id, position, label, help_text, field_type(, options)? FROM form_questions/i.test(sql)) {
       const rows = this.store.formQuestions
         .filter((row) => row.form_id === Number(params[0]))
         .sort((a, b) => a.position - b.position || a.id - b.id)
-        .map((row) => ({ ...row }));
+        .map((row) => ({ options: null, ...row }));
       return [rows];
     }
 
@@ -160,7 +175,7 @@ class FakeMysqlPool {
     }
 
     if (/^INSERT INTO form_questions/i.test(sql)) {
-      const [formId, position, label, helpText, fieldType] = params;
+      const [formId, position, label, helpText, fieldType, options] = params;
       const row = {
         id: this.nextId('form_questions'),
         form_id: Number(formId),
@@ -168,6 +183,7 @@ class FakeMysqlPool {
         label,
         help_text: helpText,
         field_type: fieldType,
+        options: options ?? null,
         created_at: this.clock(),
         updated_at: this.clock(),
       };
@@ -176,10 +192,12 @@ class FakeMysqlPool {
     }
 
     if (/^UPDATE form_questions SET position/i.test(sql)) {
-      const [position, label, helpText, fieldType, questionId, formId] = params;
+      const [position, label, helpText, fieldType, options, questionId, formId] = params;
       const row = this.store.formQuestions.find((q) => q.id === Number(questionId) && q.form_id === Number(formId));
       if (!row) return [{ affectedRows: 0 }];
-      Object.assign(row, { position, label, help_text: helpText, field_type: fieldType, updated_at: this.clock() });
+      Object.assign(row, {
+        position, label, help_text: helpText, field_type: fieldType, options: options ?? null, updated_at: this.clock(),
+      });
       return [{ affectedRows: 1 }];
     }
 
@@ -347,7 +365,12 @@ class FakeMysqlPool {
 
     // ------------------------------------------------------------- site_users
     if (/FROM site_users/i.test(sql)) {
-      const rows = this.store.siteUsers.filter((u) => u.discord_user_id === params[0]);
+      // The batch lookup used by the responses inbox passes every requested id
+      // as a placeholder, so the filter is driven by the params, not by one.
+      const wanted = new Set(params.filter((value) => typeof value === 'string'));
+      const rows = wanted.size
+        ? this.store.siteUsers.filter((u) => wanted.has(u.discord_user_id))
+        : this.store.siteUsers.filter((u) => u.discord_user_id === params[0]);
       return [rows.map((row) => ({ ...row }))];
     }
 
@@ -377,7 +400,13 @@ class FakeMysqlPool {
     return this.store.formQuestions
       .filter((q) => q.form_id === Number(formId))
       .sort((a, b) => a.position - b.position)
-      .map((q) => ({ id: q.id, label: q.label, help_text: q.help_text, field_type: q.field_type }));
+      .map((q) => ({
+        id: q.id,
+        label: q.label,
+        help_text: q.help_text,
+        field_type: q.field_type,
+        options: q.options,
+      }));
   }
 }
 

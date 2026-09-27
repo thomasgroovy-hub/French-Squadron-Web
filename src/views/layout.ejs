@@ -389,6 +389,7 @@
     .notice { padding: 0.75rem 1rem; border-radius: var(--radius-sm); font-size: 0.85rem; border: 1px solid transparent; }
     .notice-success { background: var(--success-bg); color: var(--success); border-color: rgba(21, 128, 61, 0.2); }
     .notice-danger { background: var(--danger-bg); color: var(--danger); border-color: rgba(220, 38, 38, 0.2); }
+    .notice-warning { background: var(--warning-bg); color: var(--warning); border-color: rgba(180, 83, 9, 0.2); }
 
     .question-head { display: flex; align-items: flex-start; gap: 0.7rem; margin-bottom: 0.9rem; }
     .question-index { width: 24px; height: 24px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; background: var(--bg-pill); border: 1px solid var(--border); color: var(--text-muted); font-size: 0.72rem; font-weight: 700; }
@@ -404,9 +405,23 @@
     .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .icon-btn-danger:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger); border-color: rgba(220, 38, 38, 0.3); }
 
+    /* Créateur de formulaire : poignée de drag, éditeur d'options, actions */
+    .builder-handle { color: var(--text-muted); font-size: 0.95rem; line-height: 1; cursor: grab; user-select: none; }
+    .builder-row.is-dragging { opacity: 0.5; border-color: var(--accent); }
+    .builder-row[draggable="true"] .builder-handle:active { cursor: grabbing; }
+    .builder-actions { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; flex-shrink: 0; }
+    .option-row { display: flex; align-items: center; gap: 0.5rem; }
+    .option-row .field-input { flex: 1; min-width: 0; }
+    .option-editor[hidden] { display: none; }
+
     .answer-block { padding: 0.9rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-card); }
     .answer-label { display: flex; align-items: flex-start; gap: 0.7rem; margin-bottom: 0.6rem; }
     .answer-value { white-space: pre-wrap; line-height: 1.6; font-size: 0.9rem; color: var(--text-main); }
+    /* Réponse à choix multiple : une puce par option retenue. */
+    .answer-list { margin: 0; padding-left: 1.15rem; display: grid; gap: 0.25rem; font-size: 0.9rem; line-height: 1.6; color: var(--text-main); }
+    .choice-list { margin: 0; padding: 0; display: grid; gap: 0.4rem; list-style: none; }
+    .choice-item { display: flex; align-items: center; gap: 0.5rem; color: var(--text-main); font-size: 0.9rem; }
+    .choice-item input { accent-color: var(--accent); }
 
     .stat-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.6rem; margin-bottom: 1rem; }
     .stat { display: grid; gap: 2px; padding: 0.7rem 0.85rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-pill); }

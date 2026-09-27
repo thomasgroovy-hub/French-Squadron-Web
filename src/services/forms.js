@@ -15,9 +15,59 @@ export const RESPONSE_STATUS = Object.freeze({
 export const FIELD_TYPES = Object.freeze({
   SHORT: 'short',
   LONG: 'long',
+  CHOICE_SINGLE: 'choice_single',
+  CHOICE_MULTIPLE: 'choice_multiple',
+  DATE: 'date',
 });
 
 export const FIELD_TYPE_VALUES = Object.freeze(Object.values(FIELD_TYPES));
+
+/**
+ * Types qui présentent une liste d'options. `options` n'est stocké que pour
+ * ceux-ci : les autres questions l'ignorent, ce qui garde la colonne NULL et
+ * évite d'attacher des données inutiles à un champ libre.
+ */
+export const CHOICE_FIELD_TYPES = Object.freeze([
+  FIELD_TYPES.CHOICE_SINGLE,
+  FIELD_TYPES.CHOICE_MULTIPLE,
+]);
+
+export function isChoiceFieldType(fieldType) {
+  return CHOICE_FIELD_TYPES.includes(fieldType);
+}
+
+/** MySQL ENUM derived from FIELD_TYPES: the schema cannot drift from the list. */
+const FIELD_TYPE_ENUM = FIELD_TYPE_VALUES.map((type) => `'${type}'`).join(', ');
+
+export const MAX_OPTIONS_PER_QUESTION = 50;
+export const MAX_OPTION_LENGTH = 200;
+
+/**
+ * Normalise une liste d'options : chaîne JSON (base) ou tableau (formulaire
+ * publié). Renvoie toujours un tableau de chaînes, sans doublon à vide près.
+ */
+export function parseQuestionOptions(value) {
+  let raw = value;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const options = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'string') continue;
+    const option = entry.replace(/\r\n/g, ' ').trim().slice(0, MAX_OPTION_LENGTH);
+    if (!option || seen.has(option)) continue;
+    seen.add(option);
+    options.push(option);
+    if (options.length >= MAX_OPTIONS_PER_QUESTION) break;
+  }
+  return options;
+}
 
 const initializedPools = new Map();
 
@@ -54,7 +104,8 @@ export async function ensureFormsTables(pool) {
           position INT UNSIGNED NOT NULL DEFAULT 0,
           label VARCHAR(200) NOT NULL,
           help_text VARCHAR(500) NULL,
-          field_type ENUM('short', 'long') NOT NULL DEFAULT 'short',
+          field_type ENUM(${FIELD_TYPE_ENUM}) NOT NULL DEFAULT 'short',
+          options TEXT NULL,
           created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           INDEX form_questions_form_idx (form_id, position),
@@ -62,6 +113,31 @@ export async function ensureFormsTables(pool) {
             REFERENCES forms (id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
+
+      // The `options` column and the widened ENUM are added after the table
+      // exists, so a database created before this change is migrated in place on
+      // the next boot instead of requiring a manual migration step.
+      const [questionColumns] = await pool.execute('SHOW COLUMNS FROM form_questions');
+      const columns = Array.isArray(questionColumns) ? questionColumns : [];
+      const fieldTypeColumn = columns.find((column) => column?.Field === 'field_type');
+
+      // A pool that cannot answer SHOW COLUMNS is not a reason to fail the boot:
+      // a fresh table already carries the column from the CREATE above.
+      if (!columns.some((column) => column?.Field === 'options')) {
+        await pool.execute('ALTER TABLE form_questions ADD COLUMN options TEXT NULL AFTER field_type');
+      }
+
+      // Without this, MySQL would reject a `choice_single` on a database created
+      // before the new types. Widening an ENUM never drops an existing value, so
+      // it is safe to replay on every boot.
+      const currentEnum = String(fieldTypeColumn?.Type || '');
+      const enumIsUpToDate = FIELD_TYPE_VALUES.every((type) => currentEnum.includes(`'${type}'`));
+      if (columns.length && !enumIsUpToDate) {
+        await pool.execute(
+          `ALTER TABLE form_questions
+           MODIFY COLUMN field_type ENUM(${FIELD_TYPE_ENUM}) NOT NULL DEFAULT 'short'`,
+        );
+      }
 
       await pool.execute(`
         CREATE TABLE IF NOT EXISTS form_responses (
@@ -113,7 +189,11 @@ function mapQuestion(row) {
     position: Number(row.position),
     label: row.label,
     helpText: row.help_text || '',
-    fieldType: row.field_type,
+    // An unknown value would break the conditional rendering, so it falls back
+    // to the plain text field rather than rendering nothing.
+    fieldType: FIELD_TYPE_VALUES.includes(row.field_type) ? row.field_type : FIELD_TYPES.SHORT,
+    // Always a parsed array so the views never have to JSON.parse.
+    options: parseQuestionOptions(row.options),
   };
 }
 
@@ -199,7 +279,7 @@ export async function getFormById(formId, pool = getDatabasePool(), { withQuesti
 export async function listQuestions(formId, pool = getDatabasePool()) {
   if (!pool || !formId) return [];
   const [rows] = await pool.execute(
-    'SELECT id, form_id, position, label, help_text, field_type FROM form_questions WHERE form_id = ? ORDER BY position ASC, id ASC',
+    'SELECT id, form_id, position, label, help_text, field_type, options FROM form_questions WHERE form_id = ? ORDER BY position ASC, id ASC',
     [formId],
   );
   return rows.map(mapQuestion);
@@ -290,19 +370,25 @@ async function syncQuestions(formId, questions, pool) {
   const keptIds = new Set();
 
   for (const [index, question] of questions.entries()) {
+    const fieldType = FIELD_TYPE_VALUES.includes(question.fieldType) ? question.fieldType : FIELD_TYPES.SHORT;
+    // Only the choice types carry options; storing them anywhere else would
+    // leave dead data behind as soon as the type is switched back.
+    const options = isChoiceFieldType(fieldType)
+      ? JSON.stringify(parseQuestionOptions(question.options))
+      : null;
     const id = Number.parseInt(question.id, 10);
     if (Number.isInteger(id) && existingIds.has(id)) {
       keptIds.add(id);
       await pool.execute(
         `UPDATE form_questions
-         SET position = ?, label = ?, help_text = ?, field_type = ?
+         SET position = ?, label = ?, help_text = ?, field_type = ?, options = ?
          WHERE id = ? AND form_id = ?`,
-        [index, question.label, question.helpText || null, question.fieldType, id, formId],
+        [index, question.label, question.helpText || null, fieldType, options, id, formId],
       );
     } else {
       const [inserted] = await pool.execute(
-        'INSERT INTO form_questions (form_id, position, label, help_text, field_type) VALUES (?, ?, ?, ?, ?)',
-        [formId, index, question.label, question.helpText || null, question.fieldType],
+        'INSERT INTO form_questions (form_id, position, label, help_text, field_type, options) VALUES (?, ?, ?, ?, ?, ?)',
+        [formId, index, question.label, question.helpText || null, fieldType, options],
       );
       keptIds.add(Number(inserted.insertId));
     }

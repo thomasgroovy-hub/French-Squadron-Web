@@ -924,7 +924,7 @@ test('staff routes deny direct access unless current Discord roles include super
     // The error page contains "Accès réservé" in the title - check for it in the HTML
     const text = await res.text();
     // The text may have UTF-8 encoding artifacts, so check for a substring
-    assert.ok(text.includes('Accès réservé') || text.includes('Acc') || text.includes('rÃ©serv'), 'Error page should indicate access denied');
+  assert.ok(text.includes('Accès réservé'), 'Error page should indicate access denied');
   } finally {
     server.close();
   }

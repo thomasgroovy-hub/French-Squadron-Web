@@ -87,15 +87,18 @@ export function invalidateGuildMemberCache(userId, guildId = webConfig.guildId) 
   else guildMemberCache.clear();
 }
 
-export async function fetchGuildRoleNames({
-  guildId = webConfig.guildId,
-  botToken = webConfig.discordToken,
-  fetchFn = fetch,
-} = {}) {
-  if (!botToken || !guildId) return new Map();
+/**
+ * Chargement des rôles du serveur, en distinguant « liste vide » de « échec ».
+ *
+ * `fetchGuildRoleNames` ne renvoie qu'une Map pour rester utilisable partout,
+ * mais le créateur de formulaire a besoin de savoir s'il doit prévenir l'utilisateur
+ * ou s'il n'y a simplement aucun rôle à proposer.
+ */
+async function loadGuildRoleNames({ guildId, botToken, fetchFn }) {
+  if (!botToken || !guildId) return { names: new Map(), failed: true };
 
   const cached = guildRoleNameCache.get(guildId);
-  if (cached && cached.expires > Date.now()) return cached.names;
+  if (cached && cached.expires > Date.now()) return { names: cached.names, failed: false };
 
   try {
     const response = await fetchFn(
@@ -110,7 +113,7 @@ export async function fetchGuildRoleNames({
 
     if (!response.ok) {
       console.warn(`[DiscordService] Guild roles fetch returned ${response.status} for guild ${guildId}`);
-      return new Map();
+      return { names: new Map(), failed: true };
     }
 
     const roles = await response.json();
@@ -121,15 +124,58 @@ export async function fetchGuildRoleNames({
     );
 
     guildRoleNameCache.set(guildId, { names, expires: Date.now() + GUILD_ROLE_TTL_MS });
-    return names;
+    return { names, failed: false };
   } catch (error) {
     console.error(`[DiscordService] Error fetching roles for guild ${guildId}:`, error.message);
-    return new Map();
+    return { names: new Map(), failed: true };
   }
+}
+
+export async function fetchGuildRoleNames(options = {}) {
+  const { names } = await loadGuildRoleNames({
+    guildId: options.guildId ?? webConfig.guildId,
+    botToken: options.botToken ?? webConfig.discordToken,
+    fetchFn: options.fetchFn ?? fetch,
+  });
+  return names;
 }
 
 export function invalidateGuildRoleCache(guildId = webConfig.guildId) {
   guildRoleNameCache.delete(guildId);
+}
+
+/**
+ * Rôles qu'un formulaire a le droit d'accorder à l'acceptation d'une candidature.
+ *
+ * Ces deux rôles sont hors périmètre : ils sont filtrés à la lecture ET
+ * rejetés à l'écriture côté serveur, car un client peut toujours poster un id à
+ * la main en contournant le <select>.
+ */
+export const FORBIDDEN_GRANTABLE_ROLE_IDS = new Set([
+  '1487264228342497384',
+  '1487276505712033883',
+]);
+
+/**
+ * Liste triée et filtrée des rôles proposables dans le créateur de formulaire.
+ *
+ * Lève une erreur si Discord est injoignable (token invalide, timeout, réseau
+ * coupé) : l'appelant décide alors quoi afficher. Un serveur qui n'a réellement
+ * aucun rôle renvoie un tableau vide, sans erreur.
+ */
+export async function fetchGrantableGuildRoles({
+  guildId = webConfig.guildId,
+  botToken = webConfig.discordToken,
+  fetchFn = fetch,
+} = {}) {
+  const { names, failed } = await loadGuildRoleNames({ guildId, botToken, fetchFn });
+  if (failed) {
+    throw new Error('La liste des rôles du serveur n’a pas pu être chargée.');
+  }
+  return [...names.entries()]
+    .filter(([id]) => !FORBIDDEN_GRANTABLE_ROLE_IDS.has(id))
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
 }
 
 /**
@@ -319,13 +365,16 @@ export async function grantGuildMemberRole({
 }
 
 /**
- * Opens a DM channel with a user and posts the given embeds.
- * Accepts ready-made discord.js embeds (or plain payload objects) so the bot
- * keeps a single source of truth for message formatting.
+ * Opens a DM channel with a user and posts the given message payload.
+ *
+ * `payload` is posted as-is, so a Components V2 message built by
+ * `services/components.js` (already carrying its own `components` and `flags`)
+ * reaches Discord exactly as the bot would render it. A plain object built
+ * elsewhere still works as long as it is a valid message body.
  */
 export async function sendDirectMessage({
   userId,
-  embeds = [],
+  payload,
   botToken = webConfig.discordToken,
   fetchFn = fetch,
 } = {}) {
@@ -335,11 +384,10 @@ export async function sendDirectMessage({
   if (!botToken) {
     return { ok: false, status: 503, error: 'Le bot Discord n’est pas configuré.' };
   }
-  if (!embeds.length) {
+  if (!payload || typeof payload !== 'object') {
     return { ok: false, status: 400, error: 'Aucun message à envoyer.' };
   }
 
-  const payload = embeds.map((embed) => (typeof embed?.toJSON === 'function' ? embed.toJSON() : embed));
   const headers = {
     Authorization: `Bot ${botToken}`,
     'Content-Type': 'application/json',
@@ -366,7 +414,10 @@ export async function sendDirectMessage({
     const messageResponse = await fetchFn(`${DISCORD_API_BASE}/channels/${channel.id}/messages`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ embeds: payload }),
+      // Le payload est transmis tel quel : un message Components V2 doit garder
+      // ses `flags` et `components` à la racine, sans être ré-emballé dans
+      // `embeds`, sous peine d'être rejeté par l'API Discord.
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(8000),
     });
 
@@ -411,7 +462,11 @@ export async function sendPermadeathDeathDM({
   }
 
   const embed = createPermadeathDeathEmbed({ robloxUsername, eventId, context });
-  const dmResult = await sendDirectMessage({ userId: discordUserId, embeds: [embed], fetchFn });
+  const dmResult = await sendDirectMessage({
+    userId: discordUserId,
+    payload: { embeds: [embed] },
+    fetchFn,
+  });
 
   if (dmResult.ok) {
     await recordDeath({

@@ -47,7 +47,17 @@
             <% if (question.helpText) { %><p class="question-help" style="margin: 0;"><%= question.helpText %></p><% } %>
           </div>
         </div>
-        <% if (value) { %>
+        <%# Un choix multiple est stocké comme un tableau : l'afficher en liste
+            à puces évite d'afficher « a,b,c » en vrac. %>
+        <% if (Array.isArray(value)) { %>
+          <% if (value.length) { %>
+            <ul class="answer-list">
+              <% value.forEach((entry) => { %><li><%= entry %></li><% }); %>
+            </ul>
+          <% } else { %>
+            <p class="muted">Aucune réponse.</p>
+          <% } %>
+        <% } else if (value) { %>
           <p class="answer-value"><%= value %></p>
         <% } else { %>
           <p class="muted">Aucune réponse.</p>

@@ -5,6 +5,9 @@ import { webConfig } from '../config.js';
 import {
   FIELD_TYPES,
   FIELD_TYPE_VALUES,
+  isChoiceFieldType,
+  MAX_OPTIONS_PER_QUESTION,
+  MAX_OPTION_LENGTH,
   FORM_STATUS,
   RESPONSE_STATUS,
   countResponsesByCreator,
@@ -25,13 +28,15 @@ import {
   deleteForm,
 } from '../services/forms.js';
 import {
+  FORBIDDEN_GRANTABLE_ROLE_IDS,
+  fetchGrantableGuildRoles,
   fetchGuildRoleNames,
   formatDate,
   grantGuildMemberRole,
   sendDirectMessage,
 } from '../services/discord.js';
-import { fetchSiteUser } from '../services/members.js';
-import { createApplicationAcceptedEmbed } from '../services/embeds.js';
+import { fetchSiteUser, fetchSiteUsersByIds } from '../services/members.js';
+import { createApplicationAcceptedPayload } from '../services/embeds.js';
 
 const MAX_QUESTIONS = 20;
 const MAX_ANSWER_LENGTH = 4000;
@@ -42,6 +47,7 @@ const MOVE_DIRECTIONS = Object.freeze({ up: -1, down: 1 });
 const STRUCTURAL_NOTICES = Object.freeze({
   add_question: 'Question ajoutée.',
   remove_question: 'Question supprimée.',
+  duplicate_question: 'Question dupliquée.',
   move: 'Ordre mis à jour.',
 });
 
@@ -54,6 +60,9 @@ const DECISIONS = {
   rejected: RESPONSE_STATUS.REJECTED,
 };
 const SNOWFLAKE_PATTERN = /^\d{17,20}$/;
+
+/** Message unique affiché quand un rôle interdit est posté manuellement. */
+const FORBIDDEN_ROLE_ERROR = 'Ce rôle ne peut pas être attribué automatiquement par un formulaire.';
 
 const RESPONSE_STATUS_LABELS = Object.freeze({
   [RESPONSE_STATUS.PENDING]: 'En attente',
@@ -84,9 +93,55 @@ function asStringArray(value) {
   return [];
 }
 
+/**
+ * The builder posts one `question_option[][]` group per row, so the options of
+ * question N live in `body.question_option[N]`. Rows that have no option group
+ * yet (a question still typed as free text) must not shift the array, hence the
+ * placeholder entry.
+ */
+function parseQuestionOptions(body, rowCount) {
+  const groups = body?.question_option;
+  const options = [];
+  for (let index = 0; index < rowCount; index += 1) {
+    const group = Array.isArray(groups?.[index]) ? groups[index] : [];
+    const cleaned = group
+      .map((entry) => cleanText(entry, 200))
+      .filter(Boolean)
+      .slice(0, 50);
+    options.push([...new Set(cleaned)]);
+  }
+  return options;
+}
+
 function normalizeRoleId(value) {
   const roleId = cleanText(value, 20);
-  return SNOWFLAKE_PATTERN.test(roleId) ? roleId : null;
+  if (!SNOWFLAKE_PATTERN.test(roleId)) return null;
+  if (FORBIDDEN_GRANTABLE_ROLE_IDS.has(roleId)) return null;
+  return roleId;
+}
+
+/**
+ * Un rôle interdit est renvoyé tel quel par un POST manuel : le dire
+ * explicitement vaut mieux qu'un silence, sinon le créateur croit avoir
+ * enregistré un rôle alors que rien ne sera accordé à l'acceptation.
+ */
+function isForbiddenRoleId(value) {
+  const roleId = cleanText(value, 20);
+  return SNOWFLAKE_PATTERN.test(roleId) && FORBIDDEN_GRANTABLE_ROLE_IDS.has(roleId);
+}
+
+/**
+ * Rôles proposables dans le select. Toujours appelé avant un rendu du builder.
+ * Un échec Discord ne casse pas la page : la liste est simplement vide, et le
+ * créateur est prévenu pour qu'il ne croie pas à une liste de rôles vide.
+ */
+async function loadGrantableRoles(fetchFn) {
+  try {
+    return { roles: await fetchGrantableGuildRoles({ fetchFn }), error: null };
+  } catch (error) {
+    console.error('[WebRoutes] Unable to load grantable roles:', error.message);
+    return { roles: [], error: true };
+  }
 }
 
 /**
@@ -100,20 +155,62 @@ function parseQuestions(body) {
   const types = asStringArray(body.question_type);
 
   const count = Math.max(labels.length, ids.length, helps.length, types.length);
+  const optionGroups = parseQuestionOptions(body, count);
   const questions = [];
   for (let index = 0; index < count && questions.length < MAX_QUESTIONS; index += 1) {
+    const fieldType = FIELD_TYPE_VALUES.includes(types[index]) ? types[index] : FIELD_TYPES.SHORT;
     questions.push({
       id: ids[index] || null,
       label: cleanText(labels[index], 200),
       helpText: cleanText(helps[index], 500),
-      fieldType: FIELD_TYPE_VALUES.includes(types[index]) ? types[index] : FIELD_TYPES.SHORT,
+      fieldType,
+      options: optionGroups[index] || [],
     });
   }
   return questions;
 }
 
-function moveQuestion(questions, questionId, direction) {
-  const index = questions.findIndex((question) => String(question.id) === String(questionId));
+/**
+ * Reads one submitted answer in the shape its field type implies.
+ *
+ * A checkbox group posts an array, so a multiple choice is stored as a real
+ * array in the `answers` JSON — no schema change needed. Returns `null` when
+ * the question was left unanswered, which is what the "please answer
+ * everything" check looks for.
+ */
+function readAnswer(raw, question) {
+  if (question.fieldType === FIELD_TYPES.CHOICE_MULTIPLE) {
+    const entries = asStringArray(raw)
+      .map((entry) => cleanText(entry, MAX_ANSWER_LENGTH))
+      .filter(Boolean);
+    return entries.length ? entries : null;
+  }
+  // A single choice, a date and both free-text types all arrive as one string.
+  // `express.urlencoded({ extended: true })` already turns `answer_7=1&answer_7=2`
+  // into an array, which is coerced back to a single value here.
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  const text = cleanText(value, MAX_ANSWER_LENGTH);
+  return text || null;
+}
+
+/**
+ * Cible d'une action de structure, telle que postée par le builder.
+ *
+ * Une question déjà enregistrée est visée par son id. Une question encore
+ * nouvelle n'a pas d'id : le bouton envoie alors `row:<index>`, qui la désigne
+ * sans ambiguïté puisque l'ordre du POST est celui affiché à l'écran.
+ */
+function resolveQuestionIndex(questions, target) {
+  const raw = String(target ?? '').trim();
+  if (raw.startsWith('row:')) {
+    const index = Number.parseInt(raw.slice('row:'.length), 10);
+    return Number.isInteger(index) && index >= 0 && index < questions.length ? index : -1;
+  }
+  return questions.findIndex((question) => question.id != null && String(question.id) === raw);
+}
+
+function moveQuestion(questions, questionTarget, direction) {
+  const index = resolveQuestionIndex(questions, questionTarget);
   if (index === -1) return;
   const target = index + (MOVE_DIRECTIONS[String(direction)] ?? 1);
   if (target < 0 || target >= questions.length) return;
@@ -131,17 +228,34 @@ function moveQuestion(questions, questionId, direction) {
 function applyStructuralAction(action, move, questions) {
   if (action === 'add_question') {
     if (questions.length < MAX_QUESTIONS) {
-      questions.push({ id: null, label: '', helpText: '', fieldType: FIELD_TYPES.SHORT });
+      questions.push({ id: null, label: '', helpText: '', fieldType: FIELD_TYPES.SHORT, options: [] });
       return { questions, notice: 'add_question' };
     }
     return { questions, notice: 'add_question' };
   }
 
   if (action.startsWith('remove_question:')) {
-    const targetId = action.slice('remove_question:'.length);
-    const index = questions.findIndex((question) => String(question.id) === targetId);
+    const index = resolveQuestionIndex(questions, action.slice('remove_question:'.length));
     if (index !== -1) questions.splice(index, 1);
     return { questions, notice: 'remove_question' };
+  }
+
+  // The copy is inserted with `id: null` so `syncQuestions` re-inserts it as a
+  // brand new question: the original keeps its id, therefore the answers already
+  // collected against it stay attached to the right question.
+  if (action.startsWith('duplicate_question:')) {
+    const index = resolveQuestionIndex(questions, action.slice('duplicate_question:'.length));
+    if (index !== -1 && questions.length < MAX_QUESTIONS) {
+      const source = questions[index];
+      questions.splice(index + 1, 0, {
+        id: null,
+        label: source.label,
+        helpText: source.helpText,
+        fieldType: source.fieldType,
+        options: [...(source.options || [])],
+      });
+    }
+    return { questions, notice: 'duplicate_question' };
   }
 
   if (move) {
@@ -165,7 +279,265 @@ function toStoredQuestions(questions) {
     label: question.label,
     helpText: question.helpText,
     fieldType: question.fieldType,
+    options: isChoiceFieldType(question.fieldType) ? (question.options || []) : [],
   }));
+}
+
+/** Squelette d'un formulaire vierge, partagé par le builder et l'import. */
+function emptyDraftForm() {
+  return {
+    id: null,
+    title: '',
+    description: '',
+    grantedRoleId: null,
+    status: FORM_STATUS.DRAFT,
+    statusLabel: FORM_STATUS_LABELS[FORM_STATUS.DRAFT],
+    questions: [{ id: null, label: '', helpText: '', fieldType: FIELD_TYPES.SHORT, options: [] }],
+  };
+}
+
+/**
+ * Correspondance entre les types de questions Google et les nôtres.
+ *
+ * Un type non listé (échelle, grille, fichier, date et heure) retombe sur
+ * `short` : le libellé de la question est conservé tel quel, donc rien n'est
+ * perdu, et le créateur pourra corriger le type à la main.
+ */
+const GOOGLE_FORM_TYPE_MAP = Object.freeze({
+  0: FIELD_TYPES.SHORT, // Réponse courte
+  1: FIELD_TYPES.LONG, // Paragraphe
+  2: FIELD_TYPES.CHOICE_SINGLE, // Choix multiple (liste déroulante)
+  3: FIELD_TYPES.CHOICE_SINGLE, // Liste déroulante
+  4: FIELD_TYPES.CHOICE_MULTIPLE, // Cases à cocher
+  5: FIELD_TYPES.DATE, // Date
+});
+
+const GOOGLE_FORM_IMPORT_WARNING = 'Import ponctuel : les futures modifications du Google Form ne seront pas répercutées ici.';
+
+/**
+ * Lit la structure d'un Google Form public depuis sa page HTML.
+ *
+ * Google expose ses données dans une variable JavaScript `FB_PUBLIC_LOAD_DATA_`
+ *_assignée à un JSON. On l'extraît par regex puis on normalise : c'est le seul
+ * point fragile de la fonctionnalité, d'où des messages d'erreur explicites
+ * plutôt qu'une exception.
+ */
+export async function parseGoogleForm({ fetchFn = fetch, url } = {}) {
+  const cleaned = cleanText(url, 500);
+  let target;
+  try {
+    target = new URL(cleaned);
+  } catch {
+    return { error: 'Cette URL de Google Form est invalide.' };
+  }
+  // `forms.gle` et `docs.google.com/forms/...` sont les deux.point d'entrée.
+  const isGoogleForm = /(^|\.)forms\.gle$/.test(target.hostname)
+    || (target.hostname === 'docs.google.com' && target.pathname.includes('/forms/'));
+  if (!isGoogleForm) {
+    return { error: 'Seules les URL de Google Forms (forms.gle ou docs.google.com/forms) sont acceptées.' };
+  }
+
+  let html;
+  // `AbortSignal.timeout` laisserait un minuteur actif pendant dix secondes
+  // après chaque import : on le coupe dès la réponse pour ne rien retenir.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetchFn(target.href, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FPCS-Site-66/1.0)' },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return {
+        error: `Google a répondu ${response.status}. Vérifiez que le formulaire est bien public (accessible sans connexion).`,
+      };
+    }
+    html = await response.text();
+  } catch (error) {
+    const reason = controller.signal.aborted ? 'délai dépassé' : error.message;
+    return { error: `Impossible de joindre Google Forms (${reason}). Réessayez dans un instant.` };
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const loadData = extractGoogleFormLoadData(html);
+  if (!loadData) {
+    return {
+      error: 'Structure du Google Form illisible. Google a probablement changé son format, ou le formulaire est privé.',
+    };
+  }
+
+  const { title, description, questions } = normalizeGoogleFormQuestions(loadData);
+  if (!questions.length) {
+    return { error: 'Aucune question lisible dans ce Google Form. Le formulaire est peut-être vide.' };
+  }
+
+  return {
+    title: title || 'Formulaire importé',
+    description,
+    questions,
+    notice: `Import réussi : ${questions.length} question${questions.length > 1 ? 's' : ''} à relire avant d’enregistrer.`,
+  };
+}
+
+/** Récupère le JSON assigné à `FB_PUBLIC_LOAD_DATA_` dans le HTML. */
+function extractGoogleFormLoadData(html) {
+  const marker = 'var FB_PUBLIC_LOAD_DATA_ =';
+  const start = html.indexOf(marker);
+  if (start === -1) return null;
+  const from = start + marker.length;
+
+  // La charge utile est un tableau imbriquant des objets. On parcourt le texte
+  // en respectant les chaînes et les échappements plutôt qu'en cherchant un
+  // `};`, qui peut apparaître dans une valeur.
+  const OPENING = new Set(['{', '[']);
+  const CLOSING = new Set(['}', ']']);
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = from; index < html.length; index += 1) {
+    const char = html[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (OPENING.has(char)) {
+      depth += 1;
+    } else if (CLOSING.has(char)) {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(html.slice(from, index + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Transforme la charge utile de Google en questions exploitables.
+ *
+ * Google a déjà déplacé ces données plusieurs fois, et l'imbrication varie selon
+ * la version de la page. On cherche donc les deux blocs utiles (`formInfo` et la
+ * liste d'items) où qu'ils soient, et on tolère les niveaux de tableau
+ * successifs : mieux vaut afficher une question au type approximatif que de
+ * faire échouer tout l'import.
+ */
+function normalizeGoogleFormQuestions(loadData) {
+  const formInfo = findGoogleFormFormInfo(loadData) || {};
+  const rawTitle = formInfo.formDescription?.[0] ?? formInfo.documentTitle?.[0];
+  const title = cleanText(firstGoogleText(rawTitle), 120);
+  const description = cleanText(firstGoogleText(formInfo.formDescription?.[1]), 2000);
+
+  const items = findGoogleFormItems(loadData);
+  const questions = [];
+  for (const item of items) {
+    if (!looksLikeGoogleFormItem(item)) continue;
+    // `item[1]` est la question, `item[3]` le type, `item[4]` les options.
+    const label = cleanText(extractGoogleFormQuestionLabel(item), 200);
+    if (!label) continue;
+    const fieldType = GOOGLE_FORM_TYPE_MAP[item[3]] ?? FIELD_TYPES.SHORT;
+    const isChoice = isChoiceFieldType(fieldType);
+    const options = isChoice ? extractGoogleFormOptions(item) : [];
+    questions.push({
+      id: null,
+      label,
+      helpText: cleanText(extractGoogleFormQuestionHelp(item), 500),
+      // Un choix sans option n'est pas saisissable côté candidat : on retombe
+      // sur un texte libre en gardant le libellé d'origine.
+      fieldType: isChoice && !options.length ? FIELD_TYPES.SHORT : fieldType,
+      options,
+    });
+    if (questions.length >= MAX_QUESTIONS) break;
+  }
+
+  return { title, description, questions };
+}
+
+/** Premier objet rencontré qui porte un `formInfo` (titre et description). */
+function findGoogleFormFormInfo(node, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 4) return null;
+  if (!Array.isArray(node) && node.formInfo) return node.formInfo;
+  const children = Array.isArray(node) ? node : Object.values(node);
+  for (const child of children) {
+    const found = findGoogleFormFormInfo(child, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Un item de question Google porte la question en `1` et le type en `3`. */
+function looksLikeGoogleFormItem(value) {
+  return Boolean(value)
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Array.isArray(value[1])
+    && typeof value[3] === 'number';
+}
+
+/** Premier tableau d'items de question. */
+function findGoogleFormItems(node, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 4) return [];
+  if (Array.isArray(node) && node.some(looksLikeGoogleFormItem)) return node;
+  const children = Array.isArray(node) ? node : Object.values(node);
+  for (const child of children) {
+    const found = findGoogleFormItems(child, depth + 1);
+    if (found.length) return found;
+  }
+  return [];
+}
+
+/**
+ * Google imbrique les textes un nombre variable de fois (`[["x"]]`, `["x"]`,
+ * `"x"`). On descend jusqu'à la première chaîne.
+ */
+function firstGoogleText(value, depth = 0) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && depth < 4) {
+    for (const entry of value) {
+      const text = firstGoogleText(entry, depth + 1);
+      if (text) return text;
+    }
+  }
+  return '';
+}
+
+/** Libellé : le premier texte non vide trouvé dans l'item. */
+function extractGoogleFormQuestionLabel(item) {
+  const question = item[1];
+  const candidates = [question?.[0], question?.[1], item[4]?.[0]];
+  for (const candidate of candidates) {
+    const text = firstGoogleText(candidate);
+    if (text.trim()) return text.trim();
+  }
+  return '';
+}
+
+function extractGoogleFormQuestionHelp(item) {
+  return firstGoogleText(item[1]?.[2]);
+}
+
+/** Options d'une question à choix, telles que libellées chez Google. */
+function extractGoogleFormOptions(item) {
+  const raw = Array.isArray(item[4]) ? item[4] : [];
+  const options = [];
+  for (const entry of raw) {
+    const text = firstGoogleText(entry);
+    if (text.trim()) options.push(text.trim().slice(0, MAX_OPTION_LENGTH));
+  }
+  return [...new Set(options)].slice(0, MAX_OPTIONS_PER_QUESTION);
 }
 
 function describeForm(form) {
@@ -192,6 +564,56 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
   const router = Router();
 
   router.use(requireAuth);
+
+  /**
+   * Import ponctuel d'un Google Form.
+   *
+   * Ce n'est PAS une synchronisation : Google n'expose aucun webhook en lecture.
+   * On récupère la structure une fois pour pré-remplir le créateur, et le
+   * formulaire reste ensuite 100 % natif au site. Rien n'est écrit en base ici :
+   * la sauvegarde passe par le flux `createForm` habituel, après relecture.
+   */
+  router.post('/importer-google-form', requireFormsRole, async (req, res) => {
+    const parsed = await parseGoogleForm({ fetchFn, url: req.body?.url });
+    const { roles: grantableRoles, error: rolesLoadError } = await loadGrantableRoles(fetchFn);
+    if (parsed.error) {
+      return res.status(400).render('form-builder', {
+        title: 'Nouveau formulaire | Candidatures',
+        form: emptyDraftForm(),
+        grantableRoles,
+        rolesLoadError,
+        isNew: true,
+        error: parsed.error,
+        notice: null,
+        importWarning: null,
+        cooldownMinutes: 0,
+        publishBlock: null,
+      });
+    }
+
+    return res.status(200).render('form-builder', {
+      title: 'Nouveau formulaire | Candidatures',
+      form: {
+        id: null,
+        title: parsed.title,
+        description: parsed.description,
+        grantedRoleId: null,
+        status: FORM_STATUS.DRAFT,
+        statusLabel: FORM_STATUS_LABELS[FORM_STATUS.DRAFT],
+        questions: parsed.questions,
+      },
+      grantableRoles,
+      rolesLoadError,
+      isNew: true,
+      error: null,
+      notice: parsed.notice,
+      // Rendus dans la même page : rien n'est encore enregistré, l'utilisateur
+      // relit, ajuste, puis clique « Enregistrer » comme d'habitude.
+      importWarning: GOOGLE_FORM_IMPORT_WARNING,
+      cooldownMinutes: 0,
+      publishBlock: null,
+    });
+  });
 
   // ---------------------------------------------------------------- Candidatures
 
@@ -278,9 +700,9 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
       const answers = {};
       const missing = [];
       for (const question of form.questions) {
-        const value = cleanText(req.body?.[`answer_${question.id}`], MAX_ANSWER_LENGTH);
-        if (!value) missing.push(question.label);
-        answers[String(question.id)] = value;
+        const answer = readAnswer(req.body?.[`answer_${question.id}`], question);
+        if (answer === null) missing.push(question.label);
+        answers[String(question.id)] = answer;
       }
 
       if (missing.length) {
@@ -337,6 +759,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
   router.get('/nouveau', requireFormsRole, async (req, res) => {
     try {
       await ensureFormsTables(pool);
+      const { roles: grantableRoles, error: rolesLoadError } = await loadGrantableRoles(fetchFn);
       res.render('form-builder', {
         title: 'Nouveau formulaire | Candidatures',
         form: {
@@ -346,11 +769,14 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
           grantedRoleId: null,
           status: FORM_STATUS.DRAFT,
           statusLabel: FORM_STATUS_LABELS[FORM_STATUS.DRAFT],
-          questions: [{ id: null, label: '', helpText: '', fieldType: FIELD_TYPES.SHORT }],
+          questions: emptyDraftForm().questions,
         },
+        grantableRoles,
+        rolesLoadError,
         isNew: true,
         error: null,
         notice: null,
+        importWarning: null,
         cooldownMinutes: 0,
         publishBlock: null,
       });
@@ -372,23 +798,37 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
     const grantedRoleId = normalizeRoleId(req.body?.granted_role_id);
     const { questions, notice } = applyStructuralAction(action, move, parseQuestions(req.body));
 
-    const renderBuilder = (error) => res.status(error ? 400 : 200).render('form-builder', {
-      title: 'Nouveau formulaire | Candidatures',
-      form: {
-        id: null,
-        title,
-        description,
-        grantedRoleId,
-        status: FORM_STATUS.DRAFT,
-        statusLabel: FORM_STATUS_LABELS[FORM_STATUS.DRAFT],
-        questions,
-      },
-      isNew: true,
-      error,
-      notice: STRUCTURAL_NOTICES[notice] || null,
-      cooldownMinutes: 0,
-      publishBlock: null,
-    });
+    const renderBuilder = async (error) => {
+      const { roles: grantableRoles, error: rolesLoadError } = await loadGrantableRoles(fetchFn);
+      return res.status(error ? 400 : 200).render('form-builder', {
+        title: 'Nouveau formulaire | Candidatures',
+        form: {
+          id: null,
+          title,
+          description,
+          grantedRoleId,
+          status: FORM_STATUS.DRAFT,
+          statusLabel: FORM_STATUS_LABELS[FORM_STATUS.DRAFT],
+          questions,
+        },
+        grantableRoles,
+        rolesLoadError,
+        isNew: true,
+        error,
+        notice: STRUCTURAL_NOTICES[notice] || null,
+        // Un import n'est visible que le temps de l'écran de pré-remplissage :
+        // dès que le formulaire est enregistré, il devient 100 % natif.
+        importWarning: null,
+        cooldownMinutes: 0,
+        publishBlock: null,
+      });
+    };
+
+    // Un rôle interdit posté à la main est refusé explicitement : l'ignorer
+    // laisserait croire à un rôle enregistré alors que rien ne sera accordé.
+    if (isForbiddenRoleId(req.body?.granted_role_id)) {
+      return renderBuilder(FORBIDDEN_ROLE_ERROR);
+    }
 
     // "Ajouter une question" must work before the form exists, otherwise the
     // creator can never reach a state that can be saved.
@@ -399,6 +839,8 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
     if (!filledQuestions.length) {
       return renderBuilder('Ajoutez au moins une question au formulaire.');
     }
+    const optionsError = validateQuestionOptions(filledQuestions);
+    if (optionsError) return renderBuilder(optionsError);
 
     try {
       const created = await createForm({
@@ -439,13 +881,19 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
       };
 
       if (isOwner) {
-        const cooldown = await getPublishCooldownRemaining(userId, webConfig.formsPublishCooldownMinutes, pool);
+        const [cooldown, roleLoad] = await Promise.all([
+          getPublishCooldownRemaining(userId, webConfig.formsPublishCooldownMinutes, pool),
+          loadGrantableRoles(fetchFn),
+        ]);
         return res.render('form-builder', {
           title: `${form.title} | Candidatures`,
           form: formView,
+          grantableRoles: roleLoad.roles,
+          rolesLoadError: roleLoad.error,
           isNew: false,
           error: null,
           notice: cleanText(req.query.enregistre, 200) || null,
+          importWarning: null,
           cooldownMinutes: webConfig.formsPublishCooldownMinutes,
           publishBlock: form.status === FORM_STATUS.OPEN ? null : cooldown,
         });
@@ -507,6 +955,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
 
       const isStructuralAction = action === 'add_question'
         || action.startsWith('remove_question:')
+        || action.startsWith('duplicate_question:')
         || Boolean(move);
       let { questions, notice } = applyStructuralAction(action, move, parseQuestions(req.body));
 
@@ -514,14 +963,21 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
       // "Ajouter une question" are dropped rather than blocking the creator.
       if (!isStructuralAction) questions = questions.filter((question) => question.label);
 
-      const error = validateBuilderInput(isStructuralAction, title, questions);
+      const forbiddenRole = isForbiddenRoleId(req.body?.granted_role_id);
+      const error = forbiddenRole
+        ? FORBIDDEN_ROLE_ERROR
+        : validateBuilderInput(isStructuralAction, title, questions);
       if (error) {
+        const { roles: grantableRoles, error: rolesLoadError } = await loadGrantableRoles(fetchFn);
         return res.status(400).render('form-builder', {
           title: `${existing.title} | Candidatures`,
           form: { ...describeForm(existing), title, description, grantedRoleId, questions },
+          grantableRoles,
+          rolesLoadError,
           isNew: false,
           error,
           notice: null,
+          importWarning: null,
           cooldownMinutes: webConfig.formsPublishCooldownMinutes,
           publishBlock: null,
         });
@@ -552,11 +1008,23 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
     }
   });
 
+  /**
+   * Une question à choix sans option n'est pas saisissable côté candidat : le
+   * select s'afficherait vide et personne ne pourrait répondre.
+   */
+  function validateQuestionOptions(questions) {
+    const broken = questions.find((question) => (
+      isChoiceFieldType(question.fieldType) && !(question.options || []).length
+    ));
+    if (!broken) return null;
+    return `La question « ${broken.label} » doit proposer au moins une option.`;
+  }
+
   function validateBuilderInput(isStructuralAction, title, questions) {
     if (!title) return 'Le titre du formulaire est obligatoire.';
     if (isStructuralAction) return null;
     if (!questions.length) return 'Ajoutez au moins une question au formulaire.';
-    return null;
+    return validateQuestionOptions(questions);
   }
 
   router.post('/:formId/publier', requireFormsRole, async (req, res) => {
@@ -667,6 +1135,15 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
       const formMap = new Map(forms.map((form) => [form.id, form]));
       const filter = cleanText(req.query.statut, 20) || 'all';
 
+      // `describeResponse` only decorates the status and the date, so the
+      // Discord identity is resolved here in a single batch: the view reads
+      // `username`, `displayName` and `avatarUrl`, which are never stored on
+      // the response row itself.
+      const identities = await fetchSiteUsersByIds(
+        responses.map((response) => response.applicantDiscordId),
+        pool,
+      );
+
       // Responses are grouped per form so the reviewer sees a per-form summary.
       const responsesByForm = new Map();
       for (const response of responses) {
@@ -687,7 +1164,17 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
         return {
           form: describeForm(form),
           stats,
-          responses: visible.map(describeResponse),
+          responses: visible.map((item) => {
+            const identity = identities.get(item.applicantDiscordId);
+            return {
+              ...describeResponse(item),
+              // A candidature whose applicant is unknown to `site_users` still
+              // has to be identifiable, hence the raw id as last resort.
+              username: identity?.discord_username || item.applicantDiscordId,
+              displayName: identity?.global_name || null,
+              avatarUrl: identity?.avatar_url || null,
+            };
+          }),
         };
       });
 
@@ -801,7 +1288,7 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
 
         const applicant = await fetchSiteUser(response.applicantDiscordId, pool);
         const roleNames = await fetchGuildRoleNames({ fetchFn });
-        const embed = createApplicationAcceptedEmbed({
+        const payload = createApplicationAcceptedPayload({
           formTitle: response.formTitle,
           applicantName: applicant?.global_name || null,
           grantedRoleName: response.grantedRoleId
@@ -810,7 +1297,7 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
         });
         const dmResult = await sendDirectMessage({
           userId: response.applicantDiscordId,
-          embeds: [embed],
+          payload,
           fetchFn,
         });
         if (!dmResult.ok) warnings.push(dmResult.error);

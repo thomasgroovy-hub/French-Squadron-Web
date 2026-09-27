@@ -17,6 +17,28 @@
 <% if (error) { %>
   <div class="notice notice-danger" style="margin-top: 1rem;"><%= error %></div>
 <% } %>
+<% if (typeof importWarning !== 'undefined' && importWarning) { %>
+  <div class="notice notice-warning" style="margin-top: 1rem;"><%= importWarning %></div>
+<% } %>
+
+<%# Import ponctuel : pré-remplit le créateur sans rien enregistrer. Le
+    formulaire reste 100 % natif une fois la page rechargée. %>
+<% if (isNew) { %>
+  <section class="card" style="margin-top: 1rem;">
+    <div class="section-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3.5v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 19.5h15"/></svg>
+      <h2>Importer un Google Form</h2>
+    </div>
+    <p class="muted">Structure déjà remplie ? Vous pouvez partir d’un Google Form existant pour gagner du temps.</p>
+    <form action="/candidatures/importer-google-form" method="post" class="row-aside" style="margin-top: 0.9rem; align-items: flex-end;">
+      <div class="field-block" style="flex: 1; min-width: 0; margin-bottom: 0;">
+        <label class="field-label" for="google-form-url">URL du Google Form</label>
+        <input class="field-input" id="google-form-url" type="url" name="url" placeholder="https://forms.gle/xxxxxxxx" required>
+      </div>
+      <button type="submit" class="btn btn-outline">Importer</button>
+    </form>
+  </section>
+<% } %>
 
 <form id="form-editor" action="<%= isNew ? '/candidatures' : '/candidatures/' + form.id %>" method="post" class="stack" style="margin-top: 1rem;">
   <section class="card">
@@ -38,8 +60,25 @@
 
     <div class="field-block">
       <label class="field-label" for="form-role">Rôle Discord attribué à l’acceptation</label>
-      <p class="question-help">Identifiant du rôle à ajouter automatiquement au candidat. Laissez vide si l’acceptation n’accorde aucun rôle.</p>
-      <input class="field-input" id="form-role" type="text" name="granted_role_id" value="<%= form.grantedRoleId || '' %>" maxlength="20" placeholder="1532037579816570981" pattern="[0-9]*">
+      <p class="question-help">Choisissez un rôle du serveur, ou laissez sur « Aucun rôle » si l’acceptation n’accorde rien.</p>
+      <%# Une liste vide est un cas normal (serveur sans rôle attribuable) : on
+          n'alerte que sur un vrai échec de chargement, pour ne pas faire croire
+          à une panne quand il n'y a simplement rien à proposer. %>
+      <% const rolesUnavailable = typeof rolesLoadError !== 'undefined' && rolesLoadError; %>
+      <% if (rolesUnavailable) { %>
+        <p class="notice notice-warning" style="font-size: 0.8rem;">Impossible de charger la liste des rôles du serveur. Vous pouvez continuer sans rôle, ou réessayer plus tard.</p>
+        <%# Le select est neutralisé, donc on reporte la valeur déjà enregistrée
+            pour qu'un simple enregistrement ne supprime pas le rôle en cours. %>
+        <% if (form.grantedRoleId) { %>
+          <input type="hidden" name="granted_role_id" value="<%= form.grantedRoleId %>">
+        <% } %>
+      <% } %>
+      <select class="field-input" id="form-role" name="granted_role_id" <%= rolesUnavailable ? 'disabled' : '' %>>
+        <option value="">Aucun rôle</option>
+        <% (typeof grantableRoles !== 'undefined' ? grantableRoles : []).forEach((role) => { %>
+          <option value="<%= role.id %>" <%= form.grantedRoleId === role.id ? 'selected' : '' %>><%= role.name %></option>
+        <% }); %>
+      </select>
     </div>
   </section>
 
@@ -52,13 +91,21 @@
       </span>
     </div>
 
-    <div class="stack">
+    <div class="stack" id="question-list">
       <% form.questions.forEach((question, index) => { %>
-        <article class="builder-row">
+        <%
+          const options = Array.isArray(question.options) ? question.options : [];
+          const usesOptions = question.fieldType === 'choice_single' || question.fieldType === 'choice_multiple';
+          // Une question pas encore enregistrée n'a pas d'id : les boutons la
+          // visent par sa position, qui est exactement l'ordre affiché.
+          const rowKey = question.id ? String(question.id) : `row:${index}`;
+        %>
+        <article class="builder-row" draggable="true">
           <div class="builder-order">
-            <button type="submit" name="move" value="up:<%= question.id %>" class="icon-btn" title="Monter" <%= index === 0 ? 'disabled' : '' %>>▲</button>
+            <span class="builder-handle" title="Glisser pour réordonner" aria-hidden="true">⠿</span>
+            <button type="submit" name="move" value="up:<%= rowKey %>" class="icon-btn" title="Monter" <%= index === 0 ? 'disabled' : '' %>>▲</button>
             <span class="question-index"><%= index + 1 %></span>
-            <button type="submit" name="move" value="down:<%= question.id %>" class="icon-btn" title="Descendre" <%= index === form.questions.length - 1 ? 'disabled' : '' %>>▼</button>
+            <button type="submit" name="move" value="down:<%= rowKey %>" class="icon-btn" title="Descendre" <%= index === form.questions.length - 1 ? 'disabled' : '' %>>▼</button>
           </div>
           <div class="builder-body">
             <input type="hidden" name="question_id[]" value="<%= question.id || '' %>">
@@ -69,12 +116,33 @@
             <input class="field-input" id="q-help-<%= question.id || 'new' + index %>" type="text" name="question_help[]" value="<%= question.helpText %>" maxlength="500" placeholder="Précisez ce que vous attendez comme réponse.">
 
             <label class="field-label" for="q-type-<%= question.id || 'new' + index %>">Type de champ</label>
-            <select class="field-input" id="q-type-<%= question.id || 'new' + index %>" name="question_type[]">
+            <select class="field-input" id="q-type-<%= question.id || 'new' + index %>" name="question_type[]" data-options-toggle>
               <option value="short" <%= question.fieldType === 'short' ? 'selected' : '' %>>Petite réponse (une ligne)</option>
               <option value="long" <%= question.fieldType === 'long' ? 'selected' : '' %>>Longue réponse (zone de texte)</option>
+              <option value="choice_single" <%= question.fieldType === 'choice_single' ? 'selected' : '' %>>Choix unique (liste déroulante)</option>
+              <option value="choice_multiple" <%= question.fieldType === 'choice_multiple' ? 'selected' : '' %>>Choix multiple (cases à cocher)</option>
+              <option value="date" <%= question.fieldType === 'date' ? 'selected' : '' %>>Date</option>
             </select>
+
+            <%# Éditeur d'options : masqué par le script pour les types sans choix,
+                mais présent dans le HTML pour rester lisible sans JavaScript. %>
+            <div class="option-editor" data-option-editor <%= usesOptions ? '' : 'hidden' %>>
+              <p class="question-help" style="margin: 0.4rem 0 0.3rem;">Options proposées au candidat (une par ligne).</p>
+              <div data-option-rows>
+                <% options.forEach((option) => { %>
+                  <div class="option-row">
+                    <input class="field-input" type="text" name="question_option[<%= index %>][]" value="<%= option %>" maxlength="200" placeholder="Option">
+                    <button type="button" class="icon-btn icon-btn-danger" data-option-remove title="Retirer cette option">✕</button>
+                  </div>
+                <% }); %>
+              </div>
+              <button type="button" class="btn btn-outline btn-sm" data-option-add style="margin-top: 0.5rem; width: fit-content;">Ajouter une option</button>
+            </div>
           </div>
-          <button type="submit" name="action" value="remove_question:<%= question.id %>" class="icon-btn icon-btn-danger" title="Supprimer la question">✕</button>
+          <div class="builder-actions">
+            <button type="submit" name="action" value="duplicate_question:<%= rowKey %>" class="btn btn-outline btn-sm" title="Dupliquer cette question">Dupliquer</button>
+            <button type="submit" name="action" value="remove_question:<%= rowKey %>" class="icon-btn icon-btn-danger" title="Supprimer la question">✕</button>
+          </div>
         </article>
       <% }); %>
 
@@ -91,6 +159,135 @@
 
   <div class="row-aside toolbar">
     <button type="submit" name="action" value="save" class="btn btn-discord">Enregistrer</button>
+
+    <script>
+      /* Améliorations progressives du créateur : le formulaire reste
+         entièrement utilisable sans ce script (boutons ▲▼, boutons
+         d'option déjà rendus dans le HTML). Chaque brique est donc câblée
+         séparément et échouée en silence si le DOM change. */
+      (function () {
+        var list = document.getElementById('question-list');
+        if (!list) return;
+
+        function closestRow(node) {
+          var row = node;
+          while (row && !row.classList.contains('builder-row')) row = row.parentElement;
+          return row;
+        }
+
+        /* Le `name` d'une option porte l'index de sa question, pas celui de la
+           ligne : après un réordonnancement par glisser-déposer, le serveur
+           rattacherait sinon les options à la mauvaise question. */
+        function makeOptionRow(owningRow, value) {
+          var index = Array.prototype.indexOf.call(list.querySelectorAll('.builder-row'), owningRow);
+          var row = document.createElement('div');
+          row.className = 'option-row';
+          var input = document.createElement('input');
+          input.className = 'field-input';
+          input.type = 'text';
+          input.maxLength = 200;
+          input.placeholder = 'Option';
+          input.name = 'question_option[' + index + '][]';
+          if (value) input.value = value;
+          var remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'icon-btn icon-btn-danger';
+          remove.title = 'Retirer cette option';
+          remove.textContent = '✕';
+          row.appendChild(input);
+          row.appendChild(remove);
+          return row;
+        }
+
+        list.addEventListener('click', function (event) {
+          var add = event.target.closest('[data-option-add]');
+          if (add) {
+            event.preventDefault();
+            var owner = closestRow(add);
+            var rows = add.parentElement.querySelector('[data-option-rows]');
+            var row = makeOptionRow(owner, '');
+            rows.appendChild(row);
+            row.querySelector('input').focus();
+            return;
+          }
+          var remove = event.target.closest('[data-option-remove]');
+          if (remove) {
+            event.preventDefault();
+            var optionRowEl = remove.parentElement;
+            var holder = optionRowEl.parentElement;
+            // La dernière ligne reste : repartir d'une liste vide obligerait le
+            // créateur à ressaisir toutes les options.
+            if (holder.querySelectorAll('.option-row').length > 1) optionRowEl.remove();
+          }
+        });
+
+        /* ---- Afficher l'éditeur d'options selon le type choisi -------------- */
+        function syncOptionEditor(typeSelect) {
+          var editor = typeSelect.parentElement.querySelector('[data-option-editor]');
+          if (!editor) return;
+          var needsOptions = typeSelect.value === 'choice_single' || typeSelect.value === 'choice_multiple';
+          editor.hidden = !needsOptions;
+          if (needsOptions && !editor.querySelectorAll('.option-row').length) {
+            editor.querySelector('[data-option-rows]')
+              .appendChild(makeOptionRow(closestRow(typeSelect), ''));
+          }
+        }
+        list.addEventListener('change', function (event) {
+          if (event.target.matches('[data-options-toggle]')) syncOptionEditor(event.target);
+        });
+
+        /* ---- Réordonnancement par glisser-déposer -------------------------- */
+        var dragged = null;
+        list.addEventListener('dragstart', function (event) {
+          var row = closestRow(event.target);
+          if (!row) return;
+          dragged = row;
+          row.classList.add('is-dragging');
+          event.dataTransfer.effectAllowed = 'move';
+          //Obligatoire sur Firefox, qui refuse de démarrer un drag sans payload.
+          try { event.dataTransfer.setData('text/plain', ''); } catch (error) {}
+        });
+        list.addEventListener('dragover', function (event) {
+          if (!dragged) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          var target = closestRow(event.target);
+          if (!target || target === dragged) return;
+          var box = target.getBoundingClientRect();
+          var after = (event.clientY - box.top) > box.height / 2;
+          list.insertBefore(dragged, after ? target.nextSibling : target);
+        });
+        list.addEventListener('dragend', function () {
+          if (dragged) dragged.classList.remove('is-dragging');
+          dragged = null;
+        });
+
+        /* ---- Renumérotation avant envoi ----------------------------------- */
+        /* Le `name` des options et l'ordre des questions sont tous deux derivative
+           de la position dans le DOM. Un renumérotage à l'envoi garantit la
+           cohérence, que l'ordre vienne d'un glisser-déposer, des boutons ▲▼
+           ou du HTML rendu au chargement. */
+        function renumber() {
+          var rows = Array.prototype.slice.call(list.querySelectorAll('.builder-row'));
+          rows.forEach(function (row, index) {
+            var label = row.querySelector('.question-index');
+            if (label) label.textContent = String(index + 1);
+
+            // Bornes des boutons ▲▼ : le repli sans JavaScript doit rester exact.
+            var up = row.querySelector('button[name="move"][value^="up:"]');
+            var down = row.querySelector('button[name="move"][value^="down:"]');
+            if (up) up.disabled = index === 0;
+            if (down) down.disabled = index === rows.length - 1;
+
+            row.querySelectorAll('.option-row input').forEach(function (input) {
+              input.name = 'question_option[' + index + '][]';
+            });
+          });
+        }
+
+        document.getElementById('form-editor').addEventListener('submit', renumber);
+      })();
+    </script>
 
     <% if (!isNew) { %>
       <% if (form.status === 'open') { %>
