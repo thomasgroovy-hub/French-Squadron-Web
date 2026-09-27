@@ -299,18 +299,30 @@ function emptyDraftForm() {
 /**
  * Correspondance entre les types de questions Google et les nôtres.
  *
- * Un type non listé (échelle, grille, fichier, date et heure) retombe sur
- * `short` : le libellé de la question est conservé tel quel, donc rien n'est
- * perdu, et le créateur pourra corriger le type à la main.
+ * Ces codes sont ceux observés sur les pages `viewform` publiques. Un type sans
+ * équivalent (échelle, grille, fichier, heure, étoiles) retombe sur `short` :
+ * le libellé est conservé tel quel, donc rien n'est perdu, et le créateur
+ * corrigera le type à la main.
  */
 const GOOGLE_FORM_TYPE_MAP = Object.freeze({
   0: FIELD_TYPES.SHORT, // Réponse courte
   1: FIELD_TYPES.LONG, // Paragraphe
-  2: FIELD_TYPES.CHOICE_SINGLE, // Choix multiple (liste déroulante)
+  2: FIELD_TYPES.CHOICE_SINGLE, // Choix multiple (boutons radio)
   3: FIELD_TYPES.CHOICE_SINGLE, // Liste déroulante
   4: FIELD_TYPES.CHOICE_MULTIPLE, // Cases à cocher
-  5: FIELD_TYPES.DATE, // Date
+  9: FIELD_TYPES.DATE, // Date
 });
+
+/**
+ * Codes de Google qui ne sont pas des questions mais des éléments de mise en
+ * page : ils portent un titre mais aucun champ à remplir, donc on les saute au
+ * lieu de les importer en texte libre.
+ */
+const GOOGLE_FORM_NON_QUESTION_TYPES = new Set([
+  6, // Image
+  7, // Vidéo
+  8, // Titre de section
+]);
 
 const GOOGLE_FORM_IMPORT_WARNING = 'Import ponctuel : les futures modifications du Google Form ne seront pas répercutées ici.';
 
@@ -335,6 +347,13 @@ export async function parseGoogleForm({ fetchFn = fetch, url } = {}) {
     || (target.hostname === 'docs.google.com' && target.pathname.includes('/forms/'));
   if (!isGoogleForm) {
     return { error: 'Seules les URL de Google Forms (forms.gle ou docs.google.com/forms) sont acceptées.' };
+  }
+  // L'URL d'édition n'est lisible qu_connecté : on renvoie une piste plutôt que
+  // l'erreur « structure illisible » qui sortirait de la page de connexion.
+  if (/\/edit(\.html)?$/.test(target.pathname)) {
+    return {
+      error: 'Cette URL est celle de l\'éditeur, lisible seulement par son auteur. Collez le lien de réponse (bouton « Publier », puis « Copier le lien »), qui ressemble à https://forms.gle/… ou se termine par /viewform.',
+    };
   }
 
   let html;
@@ -382,10 +401,12 @@ export async function parseGoogleForm({ fetchFn = fetch, url } = {}) {
 
 /** Récupère le JSON assigné à `FB_PUBLIC_LOAD_DATA_` dans le HTML. */
 function extractGoogleFormLoadData(html) {
-  const marker = 'var FB_PUBLIC_LOAD_DATA_ =';
-  const start = html.indexOf(marker);
-  if (start === -1) return null;
-  const from = start + marker.length;
+  // Google a écrit `var FB_PUBLIC_LOAD_DATA_ =` puis
+  // `window['FB_PUBLIC_LOAD_DATA_']=` : on accepte les deux écritures plutôt que
+  // de dépendre des espaces autour du `=`.
+  const assignment = /FB_PUBLIC_LOAD_DATA_\s*'?\]?\s*=\s*/.exec(html);
+  if (!assignment) return null;
+  const from = assignment.index + assignment[0].length;
 
   // La charge utile est un tableau imbriquant des objets. On parcourt le texte
   // en respectant les chaînes et les échappements plutôt qu'en cherchant un
@@ -429,32 +450,29 @@ function extractGoogleFormLoadData(html) {
 /**
  * Transforme la charge utile de Google en questions exploitables.
  *
- * Google a déjà déplacé ces données plusieurs fois, et l'imbrication varie selon
- * la version de la page. On cherche donc les deux blocs utiles (`formInfo` et la
- * liste d'items) où qu'ils soient, et on tolère les niveaux de tableau
- * successifs : mieux vaut afficher une question au type approximatif que de
- * faire échouer tout l'import.
+ * Sur les pages `viewform` actuelles, tout est positionnel :
+ * `loadData[1]` porte l'index `8` = titre, `0` = description, `1` = les items, et
+ * chaque item est un tableau `[id, libellé, description, type, validation…]`. Les
+ * pages plus anciennes servaient des objets à clés numériques, encore gérés ici
+ * pour ne pas casser un formulaire déjà en cache.
  */
 function normalizeGoogleFormQuestions(loadData) {
-  const formInfo = findGoogleFormFormInfo(loadData) || {};
-  const rawTitle = formInfo.formDescription?.[0] ?? formInfo.documentTitle?.[0];
-  const title = cleanText(firstGoogleText(rawTitle), 120);
-  const description = cleanText(firstGoogleText(formInfo.formDescription?.[1]), 2000);
-
+  const { title, description } = readGoogleFormMeta(loadData);
   const items = findGoogleFormItems(loadData);
   const questions = [];
   for (const item of items) {
     if (!looksLikeGoogleFormItem(item)) continue;
-    // `item[1]` est la question, `item[3]` le type, `item[4]` les options.
-    const label = cleanText(extractGoogleFormQuestionLabel(item), 200);
+    // Une section ou une image n'a pas de champ à remplir.
+    if (GOOGLE_FORM_NON_QUESTION_TYPES.has(googleItemType(item))) continue;
+    const label = cleanText(googleItemLabel(item), 200);
     if (!label) continue;
-    const fieldType = GOOGLE_FORM_TYPE_MAP[item[3]] ?? FIELD_TYPES.SHORT;
+    const fieldType = GOOGLE_FORM_TYPE_MAP[googleItemType(item)] ?? FIELD_TYPES.SHORT;
     const isChoice = isChoiceFieldType(fieldType);
-    const options = isChoice ? extractGoogleFormOptions(item) : [];
+    const options = isChoice ? googleItemOptions(item) : [];
     questions.push({
       id: null,
       label,
-      helpText: cleanText(extractGoogleFormQuestionHelp(item), 500),
+      helpText: cleanText(googleItemHelp(item), 500),
       // Un choix sans option n'est pas saisissable côté candidat : on retombe
       // sur un texte libre en gardant le libellé d'origine.
       fieldType: isChoice && !options.length ? FIELD_TYPES.SHORT : fieldType,
@@ -466,7 +484,19 @@ function normalizeGoogleFormQuestions(loadData) {
   return { title, description, questions };
 }
 
-/** Premier objet rencontré qui porte un `formInfo` (titre et description). */
+/** Titre et description, lus à leur place puis repris depuis l'ancien format. */
+function readGoogleFormMeta(loadData) {
+  const root = Array.isArray(loadData?.[1]) ? loadData[1] : null;
+  const formInfo = findGoogleFormFormInfo(loadData) || {};
+  const rawTitle = root?.[8] ?? formInfo.formDescription?.[0] ?? formInfo.documentTitle?.[0];
+  const rawDescription = root?.[0] ?? formInfo.formDescription?.[1];
+  return {
+    title: cleanText(firstGoogleText(rawTitle), 120),
+    description: cleanText(firstGoogleText(rawDescription), 2000),
+  };
+}
+
+/** Premier objet rencontré qui porte un `formInfo` (ancien format). */
 function findGoogleFormFormInfo(node, depth = 0) {
   if (!node || typeof node !== 'object' || depth > 4) return null;
   if (!Array.isArray(node) && node.formInfo) return node.formInfo;
@@ -478,19 +508,25 @@ function findGoogleFormFormInfo(node, depth = 0) {
   return null;
 }
 
-/** Un item de question Google porte la question en `1` et le type en `3`. */
+/**
+ * Un item de question, dans les deux formats rencontrés.
+ *
+ * Actuel : un tableau `[id, "Libellé", description, type, …]`.
+ * Ancien : un objet `{ 1: [["Libellé"]], 3: type }`.
+ * Dans les deux cas le type est un nombre en position 3 et le libellé est
+ * imbriqué dans un nombre variable de tableaux.
+ */
 function looksLikeGoogleFormItem(value) {
-  return Boolean(value)
-    && typeof value === 'object'
-    && !Array.isArray(value)
-    && Array.isArray(value[1])
-    && typeof value[3] === 'number';
+  if (!value || typeof value !== 'object') return false;
+  if (typeof value[3] !== 'number') return false;
+  if (Array.isArray(value)) return typeof value[1] === 'string' || Array.isArray(value[1]);
+  return Array.isArray(value[1]);
 }
 
 /** Premier tableau d'items de question. */
 function findGoogleFormItems(node, depth = 0) {
-  if (!node || typeof node !== 'object' || depth > 4) return [];
-  if (Array.isArray(node) && node.some(looksLikeGoogleFormItem)) return node;
+  if (!node || typeof node !== 'object' || depth > 6) return [];
+  if (Array.isArray(node) && node.length && node.some(looksLikeGoogleFormItem)) return node;
   const children = Array.isArray(node) ? node : Object.values(node);
   for (const child of children) {
     const found = findGoogleFormItems(child, depth + 1);
@@ -514,30 +550,56 @@ function firstGoogleText(value, depth = 0) {
   return '';
 }
 
-/** Libellé : le premier texte non vide trouvé dans l'item. */
-function extractGoogleFormQuestionLabel(item) {
-  const question = item[1];
-  const candidates = [question?.[0], question?.[1], item[4]?.[0]];
-  for (const candidate of candidates) {
-    const text = firstGoogleText(candidate);
-    if (text.trim()) return text.trim();
-  }
-  return '';
+/** Code de type Google, identique dans les deux formats. */
+function googleItemType(item) {
+  return item?.[3];
 }
 
-function extractGoogleFormQuestionHelp(item) {
-  return firstGoogleText(item[1]?.[2]);
+/** Libellé : `item[1]`, une chaîne dans le format actuel, une imbrication sinon. */
+function googleItemLabel(item) {
+  return firstGoogleText(item?.[1]).trim();
 }
 
-/** Options d'une question à choix, telles que libellées chez Google. */
-function extractGoogleFormOptions(item) {
-  const raw = Array.isArray(item[4]) ? item[4] : [];
+/** Description d'une question : `item[2]` aujourd'hui, `item[1][2]` avant. */
+function googleItemHelp(item) {
+  if (typeof item?.[1] === 'string') return firstGoogleText(item[2]);
+  return firstGoogleText(item?.[1]?.[2]);
+}
+
+/**
+ * Options d'une question à choix.
+ *
+ * Aujourd'hui Google les range dans la validation : `item[4][0][1]`, chaque
+ * option étant `["Texte", …, drapeau]`. L'ancien format les mettait
+ * directement dans `item[4]`. On reconnaît la bonne liste par le type de ses
+ * entrées, sinon un identifiant d'entrée (`[246314205, null, 1]`) finirait
+ * importé comme une option.
+ */
+function googleItemOptions(item) {
+  const validation = item?.[4];
+  if (!Array.isArray(validation)) return [];
+  const raw = isGoogleOptionList(validation[0]?.[1]) ? validation[0][1]
+    : isGoogleOptionList(validation) ? validation
+      : null;
+  if (!raw) return [];
+
   const options = [];
   for (const entry of raw) {
-    const text = firstGoogleText(entry);
-    if (text.trim()) options.push(text.trim().slice(0, MAX_OPTION_LENGTH));
+    // Le drapeau final vaut 1 sur l'option « Autre », dont le libellé est vide
+    // côté page : on la rebaptise pour ne pas la perdre.
+    const isGoogleOtherOption = Array.isArray(entry) && entry[entry.length - 1] === 1;
+    const text = firstGoogleText(Array.isArray(entry) ? entry[0] : entry).trim();
+    if (text) options.push(text.slice(0, MAX_OPTION_LENGTH));
+    else if (isGoogleOtherOption) options.push('Autre');
   }
   return [...new Set(options)].slice(0, MAX_OPTIONS_PER_QUESTION);
+}
+
+/** Une liste d'options ne contient que des textes, jamais d'identifiants. */
+function isGoogleOptionList(value) {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((entry) => (Array.isArray(entry) ? typeof entry[0] === 'string' : typeof entry === 'string'));
 }
 
 function describeForm(form) {
