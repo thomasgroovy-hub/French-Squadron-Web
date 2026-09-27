@@ -80,6 +80,32 @@
       color-scheme: dark;
     }
 
+    /* Thème rose — easter egg, atteint en tapant « meow » sur le clavier. */
+    [data-theme="rose"] {
+      color-scheme: dark;
+      --bg-main: #2a141c;
+      --bg-card: #351922;
+      --bg-subtle: #40202a;
+      --bg-pill: #4a2531;
+      --bg-elevated: #3d1d26;
+      --border: #5c2f3d;
+      --border-strong: #7a3f52;
+      --text-main: #ffeef4;
+      --text-muted: #d9a7b9;
+      --accent: #ff9ebb;
+      --accent-hover: #ffb8cd;
+      --danger: #ff8fa8;
+      --danger-bg: #4d1f2b;
+      --warning: #ffc98a;
+      --warning-bg: #4d3520;
+      --success: #ffa8c4;
+      --success-bg: #4a2130;
+      --shadow: 0 1px 2px rgba(61, 15, 26, 0.4), 0 4px 14px rgba(61, 15, 26, 0.35);
+      --hero-ring: rgba(255, 158, 187, 0.12);
+      --hero-ring-glow: rgba(255, 158, 187, 0.04);
+      --theme-color: #2a141c;
+    }
+
     /* Le passage d'un thème à l'autre est instantané : pas de transition sur les
        couleurs, sinon le contenu « glisse » visuellement lors du basculement. */
     body, .navbar, .footer, .card, .field-input, .btn, .badge, .notice, .icon-btn {
@@ -437,6 +463,77 @@
       .dashboard-grid { grid-template-columns: 1fr; }
       .member-tools { flex-wrap: wrap; }
     }
+    /* Gestion des avertissements (comité d'éthique) */
+    .strike-tools { margin-top: 0.6rem; }
+    .strike-tools > summary {
+      cursor: pointer;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      list-style: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      padding: 0.2rem 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: fit-content;
+      transition: color 0.15s ease, border-color 0.15s ease;
+    }
+    .strike-tools > summary::-webkit-details-marker { display: none; }
+    .strike-tools > summary::before { content: "✎"; font-size: 0.7rem; }
+    .strike-tools > summary:hover { color: var(--text-main); border-color: var(--border-strong); }
+    .strike-tools[open] > summary { margin-bottom: 0.6rem; }
+
+    .strike-form { display: grid; gap: 0.4rem; margin-bottom: 0.5rem; }
+    .strike-label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+    .strike-textarea {
+      width: 100%;
+      resize: vertical;
+      font: inherit;
+      font-size: 0.85rem;
+      color: var(--text-main);
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.5rem 0.6rem;
+    }
+    .strike-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+    }
+    .strike-actions { display: flex; gap: 0.5rem; }
+    .strike-add { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    .btn-danger-text { color: var(--danger); }
+    .btn-danger-text:hover { border-color: var(--danger); }
+
+    /* Easter egg rose */
+    .rose-toast {
+      position: fixed;
+      left: 50%;
+      bottom: 1.5rem;
+      transform: translateX(-50%) translateY(150%);
+      background: var(--bg-elevated);
+      color: var(--text-main);
+      border: 1px solid var(--accent);
+      border-radius: 999px;
+      padding: 0.5rem 1.1rem;
+      font-size: 0.85rem;
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transition: transform 0.35s ease, opacity 0.35s ease;
+      pointer-events: none;
+      z-index: 50;
+    }
+    .rose-toast.is-visible { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+    [data-theme="rose"] .nav-mark { background: var(--accent); color: var(--bg-main); }
+
   </style>
 <% if (currentPath === '/') { %>
   <style>
@@ -481,7 +578,7 @@
         <% if (typeof isFormManager !== 'undefined' && isFormManager) { %>
           <a href="/reponses" class="nav-tab <%= currentPath.startsWith('/reponses') ? 'is-active' : '' %>">Réponses</a>
         <% } %>
-        <% if (typeof isMemberManagement !== 'undefined' && isMemberManagement) { %>
+        <% if ((typeof isMemberManagement !== 'undefined' && isMemberManagement) || (typeof canManageStrikes !== 'undefined' && canManageStrikes)) { %>
           <a href="/members" class="nav-tab <%= currentPath.startsWith('/members') ? 'is-active' : '' %>">Supervision</a>
         <% } %>
       </div>
@@ -515,30 +612,80 @@
     <span>Site-66 &copy; <%= new Date().getFullYear() %></span>
     <span> · <a href="/terms">Conditions d’utilisation</a> · <a href="/privacy">Confidentialité</a></span>
   </footer>
+  <div class="rose-toast" id="rose-toast" role="status" aria-live="polite">Le site est devenu rose 🐈</div>
   <script>
     (function () {
       var STORAGE_KEY = 'site66-theme';
+      var ROSE_KEY = 'site66-rose';
+      var THEMES = ['light', 'dark', 'rose'];
       var toggle = document.getElementById('theme-toggle');
       var meta = document.getElementById('theme-color-meta');
+      var toast = document.getElementById('rose-toast');
       if (!toggle) return;
 
+      function isRose() {
+        return document.documentElement.getAttribute('data-theme') === 'rose';
+      }
+
+      function showToast() {
+        if (!toast) return;
+        toast.classList.add('is-visible');
+        window.setTimeout(function () { toast.classList.remove('is-visible'); }, 3200);
+      }
+
       function applyTheme(theme) {
-        var resolved = theme === 'light' ? 'light' : 'dark';
+        var resolved = THEMES.indexOf(theme) === -1 ? 'dark' : theme;
         document.documentElement.setAttribute('data-theme', resolved);
         if (meta) {
-          meta.setAttribute('content', getComputedStyle(document.documentElement).getPropertyValue('--theme-color').trim() || (resolved === 'dark' ? '#0f1115' : '#f7f7f8'));
+          meta.setAttribute('content', getComputedStyle(document.documentElement).getPropertyValue('--theme-color').trim() || (resolved === 'light' ? '#f7f7f8' : '#0f1115'));
         }
         try { window.localStorage.setItem(STORAGE_KEY, resolved); } catch (error) {}
         toggle.setAttribute('aria-pressed', resolved === 'light' ? 'true' : 'false');
-        toggle.setAttribute('title', resolved === 'light' ? 'Passer au thème sombre' : 'Passer au thème clair');
+        toggle.setAttribute('title', isRose() ? 'Quitter le thème rose' : 'Basculer le thème');
       }
 
-      var current = document.documentElement.getAttribute('data-theme') || 'dark';
-      applyTheme(current);
+      var stored = null;
+      try { stored = window.localStorage.getItem(STORAGE_KEY); } catch (error) {}
+      applyTheme(stored || document.documentElement.getAttribute('data-theme') || 'dark');
 
       toggle.addEventListener('click', function () {
-        var next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        // From rose, the button is the way out: it returns to dark.
+        var next = isRose() ? 'dark' : (document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
         applyTheme(next);
+        if (isRose()) { try { window.localStorage.removeItem(ROSE_KEY); } catch (error) {} }
+      });
+
+      // ── Easter egg : taper « meow » n'importe où bascule le site en rose.
+      var buffer = '';
+      var lastKeyAt = 0;
+      document.addEventListener('keydown', function (event) {
+        if (event.ctrlKey || event.metaKey || event.altKey) return;
+        var target = event.target;
+        var tag = target && target.tagName ? target.tagName.toLowerCase() : '';
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || (target && target.isContentEditable)) return;
+
+        var now = Date.now();
+        if (now - lastKeyAt > 1500) buffer = '';
+        lastKeyAt = now;
+
+        if (event.key && event.key.length === 1) {
+          buffer = (buffer + event.key.toLowerCase()).slice(-4);
+          if (buffer === 'meow' && !isRose()) {
+            applyTheme('rose');
+            try { window.localStorage.setItem(ROSE_KEY, '1'); } catch (error) {}
+            showToast();
+          }
+        } else if (event.key === 'Backspace') {
+          buffer = buffer.slice(0, -1);
+        }
+      });
+
+      // Suppression d'un avertissement : confirmation explicite, le bouton
+      // d'envoi ne doit pas se déclencher au premier clic.
+      document.addEventListener('submit', function (event) {
+        var form = event.target;
+        if (!form || !form.dataset || !form.dataset.confirm) return;
+        if (!window.confirm(form.dataset.confirm)) event.preventDefault();
       });
     })();
   </script>

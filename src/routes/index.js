@@ -10,11 +10,18 @@ import {
   getDiscordCreationDate,
 } from '../services/discord.js';
 import { getLinkedRobloxData } from '../services/roblox.js';
-import { fetchMemberSanctions } from '../services/sanctions.js';
+import { fetchMemberSanctions, createStrike, updateStrikeReason, deleteStrike, STRIKE_ERROR_MESSAGES } from '../services/sanctions.js';
 import { fetchMemberDeaths } from '../services/deaths.js';
 import { fetchAllLinkedMembers, fetchLinkedMember } from '../services/members.js';
 import { getGrades, getRoleLabels } from '../config/roles.js';
-import { hasFormsRole, hasMemberManagementRole, requireFormsRole, requireMemberManagementRole } from '../auth/guards.js';
+import {
+  hasFormsRole,
+  hasMemberManagementRole,
+  hasTargetRole,
+  requireFormsRole,
+  requireSupervisionAccess,
+  requireTargetRole,
+} from '../auth/guards.js';
 import { createFormsRouter, createResponsesRouter } from './forms.js';
 import { createDocumentationRouter } from './documentation.js';
 
@@ -28,6 +35,8 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       res.locals.isStaff = req.memberData.hasTargetRole;
       // Member management role (supervision tab: permadeath, sanctions, member directory)
       res.locals.isMemberManagement = hasMemberManagementRole(req.memberData);
+      // Comité d'éthique: may open a member file and manage its strikes.
+      res.locals.canManageStrikes = hasTargetRole(req.memberData);
       // Forms/documentation management role, independent from the sanctions one.
       res.locals.isFormManager = hasFormsRole(req.memberData);
       // Cache for Roblox data to avoid duplicate fetches per request
@@ -128,7 +137,10 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
   router.use('/reponses', createResponsesRouter({ pool, fetchFn }));
   router.use('/documentation', createDocumentationRouter({ pool }));
 
-  router.use('/members', requireAuth, requireMemberManagementRole);
+  // A member file is reachable by the supervision role and by the comité
+  // d'éthique, which needs it to manage strikes. The tab itself is rendered
+  // for either role.
+  router.use('/members', requireAuth, requireSupervisionAccess);
 
   router.get('/members', async (req, res) => {
     try {
@@ -188,6 +200,8 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
         deaths,
         isStaffView: true,
         isReadOnly: true,
+        canManageStrikes: hasTargetRole(req.memberData),
+        strikeTarget: targetUser,
       });
     } catch (error) {
       console.error('[WebRoutes] Error rendering supervised profile:', error);
@@ -197,6 +211,58 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       });
     }
   });
+
+  // ── Strike management (comité d'éthique) ──────────────────────────────
+  // Writes straight into the `strikes` table shared with the Discord bot, so
+  // a change here is immediately visible to the bot's moderation commands.
+  // The page is re-rendered rather than redirected so the reason text survives
+  // a validation failure.
+  async function handleStrikeAction(req, res, action) {
+    const target = req.params.discordUserId;
+    const view = {
+      title: 'Sanctions | Site-66',
+      error: null,
+      notice: null,
+    };
+
+    const result = await action(target);
+    if (!result.ok) {
+      view.error = STRIKE_ERROR_MESSAGES[result.error] || STRIKE_ERROR_MESSAGES['insert-failed'];
+      return res.status(result.error === 'not-found' ? 404 : 400).render('error', {
+        ...view,
+        title: 'Action impossible',
+        message: view.error,
+      });
+    }
+    return res.redirect(`/members/${target}#sanctions`);
+  }
+
+  router.post(
+    '/members/:discordUserId/strikes',
+    requireTargetRole,
+    async (req, res) => handleStrikeAction(req, res, (target) => createStrike({
+      discordUserId: target,
+      moderatorId: req.session.user.id,
+      reason: req.body?.reason,
+    }, pool)),
+  );
+
+  router.post(
+    '/members/:discordUserId/strikes/:strikeId/edit',
+    requireTargetRole,
+    async (req, res) => handleStrikeAction(req, res, () => updateStrikeReason({
+      strikeId: req.params.strikeId,
+      reason: req.body?.reason,
+    }, pool)),
+  );
+
+  router.post(
+    '/members/:discordUserId/strikes/:strikeId/remove',
+    requireTargetRole,
+    async (req, res) => handleStrikeAction(req, res, () => deleteStrike({
+      strikeId: req.params.strikeId,
+    }, pool)),
+  );
 
   return router;
 }

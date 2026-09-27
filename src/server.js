@@ -9,6 +9,7 @@ import { createMainRouter } from './routes/index.js';
 import { createPermadeathRouter } from './routes/permadeath.js';
 
 import { getDatabasePool, getSiteDatabasePool, findMissingEnv } from './database.js';
+import { printVersionBanner } from './version.js';
 
 const SITE_DATABASE_VARS = ['SITE_MYSQL_HOST', 'SITE_MYSQL_USER', 'SITE_MYSQL_PASSWORD', 'SITE_MYSQL_DATABASE'];
 
@@ -106,6 +107,8 @@ export function startWebServer({
   pool,
   sitePool,
 } = {}) {
+  printVersionBanner();
+
   const { valid, missing } = validateWebConfig();
   if (!valid) {
     console.warn(

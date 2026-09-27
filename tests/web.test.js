@@ -10,7 +10,8 @@ import {
   invalidateGuildMemberCache,
 } from '../src/services/discord.js';
 import { getLinkedRobloxData } from '../src/services/roblox.js';
-import { fetchMemberSanctions } from '../src/services/sanctions.js';
+import { fetchMemberSanctions, createStrike, updateStrikeReason, deleteStrike } from '../src/services/sanctions.js';
+import { hasTargetRole, hasSupervisionAccess } from '../src/auth/guards.js';
 import { recordSiteLogin } from '../src/services/members.js';
 import { getRoleLabels } from '../src/config/roles.js';
 import { createApp } from '../src/server.js';
@@ -209,8 +210,138 @@ test('fetchMemberSanctions queries strikes and cases tables', async () => {
   assert.equal(result.totalCount, 2);
 });
 
-test('role mapping returns every configured grade in role order', () => {
-  assert.deepEqual(getRoleLabels([
+// ── Strike management (comité d'éthique) ─────────────────────────────────
+
+const STRIKE_TARGET = '1549824549250539634';
+const STRIKE_MODERATOR = '539089957730648065';
+
+test('createStrike writes the target, the acting moderator and the reason', async () => {
+  const calls = [];
+  const mockPool = {
+    execute: async (query, params) => {
+      calls.push({ query, params });
+      return [{ insertId: 44 }];
+    },
+  };
+
+  const result = await createStrike({
+    discordUserId: STRIKE_TARGET,
+    moderatorId: STRIKE_MODERATOR,
+    reason: '  Harcèlement en vocal  ',
+  }, mockPool);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.id, 44);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].query, /INSERT INTO strikes/);
+  assert.deepEqual(calls[0].params, [STRIKE_TARGET, STRIKE_MODERATOR, 'Harcèlement en vocal']);
+});
+
+test('createStrike refuses an empty reason and an invalid Discord id', async () => {
+  const mockPool = { execute: async () => { throw new Error('must not hit the database'); } };
+
+  assert.deepEqual(
+    await createStrike({ discordUserId: STRIKE_TARGET, moderatorId: STRIKE_MODERATOR, reason: '   ' }, mockPool),
+    { ok: false, error: 'empty-reason' },
+  );
+  assert.deepEqual(
+    await createStrike({ discordUserId: 'not-an-id', moderatorId: STRIKE_MODERATOR, reason: 'x' }, mockPool),
+    { ok: false, error: 'invalid-target' },
+  );
+  assert.deepEqual(
+    await createStrike({ discordUserId: STRIKE_TARGET, moderatorId: 'nope', reason: 'x' }, mockPool),
+    { ok: false, error: 'invalid-moderator' },
+  );
+});
+
+test('createStrike truncates a reason longer than the column', async () => {
+  const calls = [];
+  const mockPool = { execute: async (query, params) => { calls.push(params); return [{ insertId: 1 }]; } };
+
+  await createStrike({
+    discordUserId: STRIKE_TARGET,
+    moderatorId: STRIKE_MODERATOR,
+    reason: 'x'.repeat(1500),
+  }, mockPool);
+
+  assert.equal(calls[0][2].length, 1000);
+});
+
+test('updateStrikeReason rewrites the reason and keeps the original author', async () => {
+  const calls = [];
+  const mockPool = {
+    execute: async (query, params) => {
+      calls.push({ query, params });
+      return [{ affectedRows: 1 }];
+    },
+  };
+
+  const result = await updateStrikeReason({ strikeId: '43', reason: 'Raison corrigée' }, mockPool);
+
+  assert.deepEqual(result, { ok: true, id: 43 });
+  assert.match(calls[0].query, /UPDATE strikes SET raison = \? WHERE id = \?/);
+  assert.ok(!/moderator_discord_id/.test(calls[0].query), 'must not reassign the strike');
+  assert.deepEqual(calls[0].params, ['Raison corrigée', 43]);
+});
+
+test('updateStrikeReason reports a missing strike instead of silently succeeding', async () => {
+  const mockPool = { execute: async () => [{ affectedRows: 0 }] };
+
+  assert.deepEqual(
+    await updateStrikeReason({ strikeId: '999', reason: 'x' }, mockPool),
+    { ok: false, error: 'not-found' },
+  );
+  assert.deepEqual(
+    await updateStrikeReason({ strikeId: 'abc', reason: 'x' }, mockPool),
+    { ok: false, error: 'invalid-strike' },
+  );
+});
+
+test('deleteStrike removes the row by id', async () => {
+  const calls = [];
+  const mockPool = {
+    execute: async (query, params) => {
+      calls.push({ query, params });
+      return [{ affectedRows: 1 }];
+    },
+  };
+
+  const result = await deleteStrike({ strikeId: '43' }, mockPool);
+
+  assert.deepEqual(result, { ok: true, id: 43 });
+  assert.match(calls[0].query, /DELETE FROM strikes WHERE id = \?/);
+  assert.deepEqual(calls[0].params, [43]);
+});
+
+test('a failing strike write returns an error code instead of throwing', async () => {
+  const mockPool = { execute: async () => { throw new Error('ER_LOCK_DEADLOCK'); } };
+
+  assert.deepEqual(
+    await createStrike({ discordUserId: STRIKE_TARGET, moderatorId: STRIKE_MODERATOR, reason: 'x' }, mockPool),
+    { ok: false, error: 'insert-failed' },
+  );
+  assert.deepEqual(
+    await updateStrikeReason({ strikeId: '1', reason: 'x' }, mockPool),
+    { ok: false, error: 'update-failed' },
+  );
+  assert.deepEqual(
+    await deleteStrike({ strikeId: '1' }, mockPool),
+    { ok: false, error: 'delete-failed' },
+  );
+});
+
+test('hasTargetRole reads the committee flag, and supervision accepts either role', () => {
+  assert.equal(hasTargetRole({ hasTargetRole: true }), true);
+  assert.equal(hasTargetRole({ hasTargetRole: false, roles: [webConfig.memberManagementRoleId] }), false);
+  assert.equal(hasTargetRole(undefined), false);
+  assert.equal(hasTargetRole({ roles: [webConfig.targetRoleId] }), true);
+
+  assert.equal(hasSupervisionAccess({ hasTargetRole: true, roles: [] }), true);
+  assert.equal(hasSupervisionAccess({ hasTargetRole: false, roles: [webConfig.memberManagementRoleId] }), true);
+  assert.equal(hasSupervisionAccess({ hasTargetRole: false, roles: ['someone-else'] }), false);
+});
+
+test('role mapping returns every configured grade in role order', () => {  assert.deepEqual(getRoleLabels([
     '1487264228342497384',
     '1487266203864006707',
     'unknown-role',

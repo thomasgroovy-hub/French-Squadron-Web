@@ -7,6 +7,7 @@
   if (sanctions) {
     for (const strike of sanctions.strikes) {
       sanctionEntries.push({
+        strikeId: strike.id,
         title: `Avertissement n°${strike.id}`,
         reason: strike.reason,
         date: strike.formattedDate,
@@ -104,7 +105,7 @@
       </section>
 
       <% if (hasTargetRole || isStaffView) { %>
-        <section class="card">
+        <section class="card" id="sanctions">
           <div class="section-head">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 4v16"/><path d="M5.5 8.5h13"/><path d="M7.5 8.5L5 15h5z"/><path d="M16.5 8.5L14 15h5z"/></svg>
             <h2>Historique des sanctions</h2>
@@ -120,6 +121,21 @@
                   <div class="row-body">
                     <div class="row-title"><%= entry.title %></div>
                     <div class="row-subtitle"><%= entry.reason %></div>
+                    <% if (canManageStrikes && entry.strikeId) { %>
+                      <details class="strike-tools">
+                        <summary>Gérer cet avertissement</summary>
+                        <form class="strike-form" method="post" action="/members/<%= discordInfo.id %>/strikes/<%= entry.strikeId %>/edit">
+                          <label class="strike-label" for="reason-<%= entry.strikeId %>">Raison</label>
+                          <textarea class="strike-textarea" id="reason-<%= entry.strikeId %>" name="reason" rows="3" maxlength="1000" required><%= entry.reason %></textarea>
+                          <div class="strike-actions">
+                            <button class="btn btn-primary btn-sm" type="submit">Enregistrer</button>
+                          </div>
+                        </form>
+                        <form class="strike-form" method="post" action="/members/<%= discordInfo.id %>/strikes/<%= entry.strikeId %>/remove" data-confirm="Supprimer définitivement cet avertissement ?">
+                          <button class="btn btn-outline btn-sm btn-danger-text" type="submit">Supprimer</button>
+                        </form>
+                      </details>
+                    <% } %>
                   </div>
                   <div class="row-aside">
                     <span class="badge badge-<%= entry.tone %>"><%= entry.pill %></span>
@@ -136,6 +152,19 @@
               <p>Aucune sanction enregistrée</p>
             </div>
           <% } %>
+
+          <% if (canManageStrikes) { %>
+            <details class="strike-tools strike-add">
+              <summary>Ajouter un avertissement</summary>
+              <form class="strike-form" method="post" action="/members/<%= discordInfo.id %>/strikes">
+                <label class="strike-label" for="new-strike-reason">Raison de l’avertissement</label>
+                <textarea class="strike-textarea" id="new-strike-reason" name="reason" rows="3" maxlength="1000" required placeholder="Décrivez les faits reprochés."></textarea>
+                <div class="strike-actions">
+                  <button class="btn btn-primary btn-sm" type="submit">Ajouter l’avertissement</button>
+                </div>
+              </form>
+            </details>
+          <% } %>
         </section>
 <% } else { %>
         <section class="card">
@@ -151,7 +180,7 @@
         <section class="card">
           <div class="section-head">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M17.5 2.5a2.5 2.5 0 012.5 2.5v13a4 4 0 01-4 4H5a4 4 0 01-4-4v-13A2.5 2.5 0 012.5 2.5h15z"/><path d="M12 8v8"/></svg>
-            <h2>Décès (Permadeath)</h2>
+            <h2>Death</h2>
             <span class="row-aside"><span class="badge badge-cyan"><%= deaths?.length || 0 %></span></span>
           </div>
           <% if (deaths && deaths.length) { %>
@@ -170,7 +199,7 @@
                     </div>
                   </div>
                   <div class="row-aside">
-                    <span class="badge badge-danger">Permadeath</span>
+                    <span class="badge badge-danger">Death</span>
                     <span class="row-date"><%= death.formattedDate %></span>
                   </div>
                 </article>
