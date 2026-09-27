@@ -9,6 +9,7 @@ import {
   ensureDocumentationTables,
   listDocumentationBlocks,
   moveDocumentationBlock,
+  reorderDocumentationBlocks,
   updateDocumentationBlock,
 } from '../services/documentation.js';
 
@@ -74,6 +75,18 @@ function toBulletItems(content) {
 }
 
 /**
+ * Teinte de bordure et icône par type de bloc. Le rendu reprend les classes
+ * `badge-*` déjà présentes dans le layout, pour qu'aucune couleur ne soit
+ * inventée ici.
+ */
+const BLOCK_STYLES = Object.freeze({
+  [DOC_BLOCK_TYPES.HEADING]: { tone: 'cyan', icon: 'heading' },
+  [DOC_BLOCK_TYPES.TEXT]: { tone: 'cyan', icon: 'text' },
+  [DOC_BLOCK_TYPES.LINK]: { tone: 'success', icon: 'link' },
+  [DOC_BLOCK_TYPES.BULLETS]: { tone: 'success', icon: 'bullets' },
+});
+
+/**
  * « Documentation » tab: read-only for every logged-in user, with a management
  * panel for the forms/documentation role. Mounted as
  * `router.use('/documentation', createDocumentationRouter(...))` so paths are
@@ -94,12 +107,15 @@ export function createDocumentationRouter({ pool } = {}) {
     const preview = block.blockType === DOC_BLOCK_TYPES.BULLETS
       ? items.join(' · ')
       : (block.content || block.url || '');
+    const style = BLOCK_STYLES[block.blockType] || { tone: 'cyan', icon: 'text' };
     return {
       ...block,
       type: block.blockType,
       typeLabel: typeLabels[block.blockType] || block.blockType,
       items,
       preview: preview.length > 160 ? `${preview.slice(0, 160)}…` : preview,
+      tone: style.tone,
+      icon: style.icon,
     };
   }
 
@@ -129,15 +145,33 @@ export function createDocumentationRouter({ pool } = {}) {
   router.post('/blocs', requireFormsRole, async (req, res) => {
     const input = parseBlockInput(req.body);
     const error = validateBlockInput(input);
-    if (error) return redirectWithError(res, error);
+    if (!error) {
+      try {
+        await ensureDocumentationTables(pool);
+        await createDocumentationBlock({ ...input, pool });
+        return res.redirect('/documentation?info=' + encodeURIComponent('Bloc ajouté.'));
+      } catch (creationError) {
+        console.error('[WebRoutes] Error creating documentation block:', creationError);
+        return redirectWithError(res, 'Impossible d’enregistrer ce bloc.');
+      }
+    }
+    return redirectWithError(res, error);
+  });
 
+  /**
+   * Bulk reorder, sent once at the end of a drag. Declared before
+   * `/blocs/:blockId` on purpose: Express matches in order, and a later route
+   * would swallow "reordonner" as a block id.
+   */
+  router.post('/blocs/reordonner', requireFormsRole, async (req, res) => {
+    const ids = Array.isArray(req.body?.block_id) ? req.body.block_id : [req.body?.block_id].filter(Boolean);
     try {
       await ensureDocumentationTables(pool);
-      await createDocumentationBlock({ ...input, pool });
-      return res.redirect('/documentation?info=' + encodeURIComponent('Bloc ajouté.'));
-    } catch (creationError) {
-      console.error('[WebRoutes] Error creating documentation block:', creationError);
-      return redirectWithError(res, 'Impossible d’enregistrer ce bloc.');
+      await reorderDocumentationBlocks(ids, pool);
+      return res.redirect('/documentation');
+    } catch (reorderError) {
+      console.error('[WebRoutes] Error reordering documentation blocks:', reorderError);
+      return redirectWithError(res, 'Impossible de réordonner la documentation.');
     }
   });
 
@@ -163,7 +197,8 @@ export function createDocumentationRouter({ pool } = {}) {
 
   router.post('/blocs/:blockId/deplacer', requireFormsRole, async (req, res) => {
     const blockId = Number.parseInt(req.params.blockId, 10);
-    const direction = cleanText(req.body?.direction, 8) === 'haut' ? -1 : 1;
+    // The ▲▼ buttons post "up"/"down"; "haut"/"bas" are kept for older bookmarks.
+    const direction = ['up', 'haut'].includes(cleanText(req.body?.direction, 8).toLowerCase()) ? -1 : 1;
     try {
       await ensureDocumentationTables(pool);
       await moveDocumentationBlock(blockId, direction, pool);

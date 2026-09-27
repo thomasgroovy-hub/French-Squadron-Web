@@ -47,11 +47,12 @@ const pendingResponse = {
   questions: form.questions,
 };
 
+// Mirrors what `describeBlock` in routes/documentation.js hands to the view.
 const blocks = [
-  { id: 1, type: 'heading', typeLabel: 'Titre', title: 'Règlement', content: '', url: '', items: [], preview: 'Règlement' },
-  { id: 2, type: 'text', typeLabel: 'Texte', title: '', content: 'Texte', url: '', items: [], preview: 'Texte' },
-  { id: 3, type: 'link', typeLabel: 'Lien', title: 'Discord', content: '', url: 'https://discord.com', items: [], preview: 'Discord' },
-  { id: 4, type: 'bullets', typeLabel: 'Liste à puces', title: '', content: 'a\nb', url: '', items: ['a', 'b'], preview: 'a · b' },
+  { id: 1, type: 'heading', typeLabel: 'Titre', tone: 'cyan', icon: 'heading', title: 'Règlement', content: '', url: '', items: [], preview: 'Règlement' },
+  { id: 2, type: 'text', typeLabel: 'Texte', tone: 'cyan', icon: 'text', title: '', content: 'Texte', url: '', items: [], preview: 'Texte' },
+  { id: 3, type: 'link', typeLabel: 'Lien', tone: 'success', icon: 'link', title: 'Discord', content: '', url: 'https://discord.com', items: [], preview: 'Discord' },
+  { id: 4, type: 'bullets', typeLabel: 'Liste à puces', tone: 'success', icon: 'bullets', title: '', content: 'a\nb', url: '', items: ['a', 'b'], preview: 'a · b' },
 ];
 
 /** Renders a view inside the real layout, the way `server.js` does. */
@@ -59,6 +60,13 @@ function renderPage(view, data) {
   const filename = path.join(viewsDir, `${view}.ejs`);
   const body = ejs.render(fs.readFileSync(filename, 'utf8'), data, { filename });
   return ejs.render(layout, { ...data, body }, { filename: path.join(viewsDir, 'layout.ejs') });
+}
+
+/** Renders a view on its own, without the layout. Structural assertions use this so
+ *  they can't accidentally match the shared CSS/JS shipped in `<head>`. */
+function renderView(view, data) {
+  const filename = path.join(viewsDir, `${view}.ejs`);
+  return ejs.render(fs.readFileSync(filename, 'utf8'), data, { filename });
 }
 
 const pages = {
@@ -154,9 +162,119 @@ test('documentation link blocks always carry a safe target', () => {
 });
 
 test('documentation hides its management panel from plain readers', () => {
-  const asReader = renderPage('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: false, error: null, notice: null });
+  const asReader = renderView('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: false, error: null, notice: null });
   assert.doesNotMatch(asReader, /Ajouter un bloc/);
   assert.doesNotMatch(asReader, /\/documentation\/blocs/);
   // The published content stays visible.
   assert.match(asReader, /Règlement/);
+});
+
+test('every documentation block renders in its own card, with the published markup', () => {
+  const html = renderView('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: true, error: null, notice: null });
+
+  // Une carte par bloc, dans l'ordre de publication.
+  assert.equal(html.match(/<article class="doc-block-card"/g)?.length, blocks.length);
+  assert.deepEqual(
+    [...html.matchAll(/data-block-id="(\d+)"/g)].map((match) => Number(match[1])),
+    [1, 2, 3, 4],
+  );
+
+  // L'aperçu est le rendu réel, pas une chaîne tronquée à part.
+  assert.match(html, /<h2 class="doc-heading">Règlement<\/h2>/);
+  assert.match(html, /<p class="doc-text">Texte<\/p>/);
+  assert.match(html, /<a class="doc-link" href="https:\/\/discord\.com"[^>]*>Discord<\/a>/);
+  assert.match(html, /<ul class="doc-bullets">[\s\S]*<li>a<\/li>[\s\S]*<li>b<\/li>[\s\S]*<\/ul>/);
+  // L'ancien aperçu tronqué a disparu de la carte.
+  assert.doesNotMatch(html, /class="doc-preview"/);
+});
+
+test('documentation cards carry the tone and badge of their block type', () => {
+  const doc = { ...base, currentPath: '/documentation', blocks, isFormManager: true, error: null, notice: null };
+  const html = renderView('documentation', doc);
+
+  // heading/text en cyan, link/bullets en success, d'après BLOCK_STYLES.
+  assert.equal(html.match(/data-tone="cyan" data-block-id/g)?.length, 2);
+  assert.equal(html.match(/data-tone="success" data-block-id/g)?.length, 2);
+  // La carte de création porte elle aussi le ton de son type par défaut (Texte),
+  // d'où le badge cyan supplémentaire.
+  assert.equal(html.match(/class="badge badge-cyan"/g)?.length, 3);
+  assert.equal(html.match(/class="badge badge-success"/g)?.length, 2);
+
+  // La couleur vient des variables du thème, pas d'un littéral.
+  const css = renderPage('documentation', doc);
+  assert.match(css, /\.doc-block-card\[data-tone="cyan"\] \{ border-left-color: var\(--accent\); \}/);
+  assert.match(css, /\.doc-block-card\[data-tone="success"\] \{ border-left-color: var\(--success\); \}/);
+});
+
+test('each documentation card carries its own in-place edit form', () => {
+  const html = renderView('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: true, error: null, notice: null });
+
+  for (const block of blocks) {
+    assert.match(html, new RegExp(`action="/documentation/blocs/${block.id}"`), `le bloc ${block.id} a son formulaire`);
+    assert.match(html, new RegExp(`id="doc-title-${block.id}"[^>]*value="${block.title}"`));
+    assert.match(html, new RegExp(`id="doc-content-${block.id}"[^>]*>[\\s\\S]*?</textarea>`));
+    assert.match(html, new RegExp(`id="doc-url-${block.id}"[^>]*value="${block.url}"`));
+  }
+  // Un formulaire d'édition par bloc, chacun caché dans un <details>.
+  assert.equal(html.match(/<details class="doc-card-edit">/g)?.length, blocks.length);
+  assert.equal(html.match(/action="\/documentation\/blocs\/\d+"/g)?.length, blocks.length);
+  // Les valeurs pré-remplies correspondent bien au bloc.
+  assert.match(html, /id="doc-content-4"[\s\S]*?>a\nb</);
+  assert.match(html, /<option value="bullets" selected>Liste<\/option>/);
+});
+
+test('the documentation type picker offers the four block types', () => {
+  const html = renderView('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: true, error: null, notice: null });
+
+  for (const label of ['Titre', 'Texte', 'Lien', 'Liste']) {
+    assert.match(html, new RegExp(`>${label}</button>`), `le bouton ${label} existe`);
+  }
+  // Un seul champ `block_type` par formulaire : le select pilote, ou le ferait sans JS.
+  assert.equal(html.match(/<form[^>]*data-typed-form/g)?.length, blocks.length + 1);
+  assert.equal(html.match(/<select[^>]*name="block_type"/g)?.length, blocks.length + 1);
+});
+
+test('the documentation card order can be saved in one request', () => {
+  const html = renderView('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: true, error: null, notice: null });
+
+  assert.match(html, /action="\/documentation\/blocs\/reordonner"/);
+  assert.match(html, /id="doc-reorder-form"/);
+  // Les ids sont serialisés par le script, un seul envoi à la fin du drag.
+  assert.match(html, /input\.name = 'block_id'/);
+  assert.match(html, /reorderForm\.submit\(\)/);
+  assert.equal(html.match(/reorderForm\.submit\(\)/g)?.length, 1);
+  // Le repli sans JavaScript reste disponible sur chaque carte.
+  assert.equal(html.match(/name="direction" value="up"/g)?.length, blocks.length);
+  assert.equal(html.match(/name="direction" value="down"/g)?.length, blocks.length);
+  assert.match(html, /\/deplacer/);
+});
+
+test('an empty documentation offers the creation card instead of a dead end', () => {
+  const html = renderView('documentation', { ...base, currentPath: '/documentation', blocks: [], isFormManager: true, error: null, notice: null });
+
+  // L'état vide vit dans la carte de création, pas au-dessus d'un formulaire.
+  assert.match(html, /class="doc-block-card doc-new-card"[\s\S]*La documentation est vide/);
+  assert.match(html, /action="\/documentation\/blocs" method="post"/);
+  // Une seule carte, et un seul état vide : celui qu'elle contient.
+  assert.equal(html.match(/class="empty-state"/g)?.length, 1);
+  assert.equal(html.match(/<article class="doc-block-card/g)?.length, 1);
+});
+
+test('a reader without the forms role gets no edit, reorder or creation card', () => {
+  const asReader = renderView('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: false, error: null, notice: null });
+
+  assert.doesNotMatch(asReader, /doc-card-edit/);
+  assert.doesNotMatch(asReader, /doc-new-card/);
+  assert.doesNotMatch(asReader, /doc-reorder-form/);
+  assert.doesNotMatch(asReader, /data-confirm="Supprimer ce bloc/);
+  assert.doesNotMatch(asReader, /deplacer|supprimer|reordonner/);
+  assert.doesNotMatch(asReader, /draggable="true"/);
+  // Le contenu publié, lui, reste complet.
+  assert.match(asReader, /<h2 class="doc-heading">Règlement<\/h2>/);
+  assert.match(asReader, /<li>a<\/li>/);
+
+  // Une page vide reste lisible, sans carte de création.
+  const emptyReader = renderView('documentation', { ...base, currentPath: '/documentation', blocks: [], isFormManager: false, error: null, notice: null });
+  assert.doesNotMatch(emptyReader, /doc-new-card/);
+  assert.match(emptyReader, /Aucun contenu n/);
 });

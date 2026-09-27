@@ -119,6 +119,23 @@ export async function deleteDocumentationBlock(blockId, pool = getDatabasePool()
 }
 
 /**
+ * Renumbers every block from the given order, so a drag-and-drop costs one
+ * request instead of one reload per step. Ids that are not numbers are dropped:
+ * the list comes straight from a form post.
+ */
+export async function reorderDocumentationBlocks(orderedIds, pool = getDatabasePool()) {
+  if (!pool || !Array.isArray(orderedIds) || !orderedIds.length) return false;
+  const ids = orderedIds.map((id) => Number.parseInt(id, 10)).filter((id) => Number.isInteger(id) && id > 0);
+  if (!ids.length) return false;
+
+  await ensureDocumentationTables(pool);
+  for (const [position, id] of ids.entries()) {
+    await pool.execute('UPDATE documentation_blocks SET position = ? WHERE id = ?', [position, id]);
+  }
+  return true;
+}
+
+/**
  * Moves a block one slot up or down and renumbers the whole list so positions
  * stay dense. `direction` is -1 (up) or 1 (down).
  */
