@@ -8,7 +8,7 @@
  *   - MAJOR (V.01 -> V.1.0): a breaking change, a new required env var, or any
  *     schema change that needs a manual step on the host.
  */
-export const SITE_VERSION = 'FPCS-WEB V.01';
+export const SITE_VERSION = 'FPCS-WEB V.11';
 
 export function printVersionBanner() {
   console.log('========================================');

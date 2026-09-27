@@ -127,8 +127,19 @@ export async function createStrike(
 /**
  * Rewrites the reason of an existing strike. The original author is preserved
  * on purpose: an edited warning still belongs to the moderator who issued it.
+ *
+ * `discordUserId` scopes the write to one member. Without it, a staff member
+ * could hand-edit the URL to touch a strike belonging to somebody else's file.
+ *
+ * The previous reason is read back so the audit log can show what changed
+ * instead of only the new value. Existence is decided by that SELECT rather
+ * than by `affectedRows`: MySQL reports *changed* rows for UPDATE, so saving a
+ * reason unchanged would otherwise look like a missing strike.
  */
-export async function updateStrikeReason({ strikeId, reason }, pool = getDatabasePool()) {
+export async function updateStrikeReason(
+  { strikeId, reason, discordUserId },
+  pool = getDatabasePool(),
+) {
   if (!pool) return { ok: false, error: 'database-unavailable' };
 
   const id = Number.parseInt(strikeId, 10);
@@ -138,31 +149,49 @@ export async function updateStrikeReason({ strikeId, reason }, pool = getDatabas
   if (!cleanReason) return { ok: false, error: 'empty-reason' };
 
   try {
-    const [result] = await pool.execute(
+    const [rows] = await pool.execute(
+      `SELECT id, raison FROM ${STRIKE_TABLE} WHERE id = ?${discordUserId ? ' AND discord_id = ?' : ''}`,
+      discordUserId ? [id, discordUserId] : [id],
+    );
+    const existing = rows[0];
+    if (!existing) return { ok: false, error: 'not-found' };
+
+    await pool.execute(
       `UPDATE ${STRIKE_TABLE} SET raison = ? WHERE id = ?`,
       [cleanReason, id],
     );
-    if (!result.affectedRows) return { ok: false, error: 'not-found' };
-    return { ok: true, id };
+    return { ok: true, id, previousReason: existing.raison, newReason: cleanReason };
   } catch (error) {
     console.error('[SanctionsService] Error updating strike:', error.message);
     return { ok: false, error: 'update-failed' };
   }
 }
 
-export async function deleteStrike({ strikeId }, pool = getDatabasePool()) {
+/**
+ * Removes a strike. `discordUserId` scopes the delete to the member whose file
+ * the action was performed from, and the reason is read first so the audit log
+ * can record what was actually removed.
+ */
+export async function deleteStrike({ strikeId, discordUserId }, pool = getDatabasePool()) {
   if (!pool) return { ok: false, error: 'database-unavailable' };
 
   const id = Number.parseInt(strikeId, 10);
   if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, error: 'invalid-strike' };
 
   try {
+    const [rows] = await pool.execute(
+      `SELECT id, raison FROM ${STRIKE_TABLE} WHERE id = ?${discordUserId ? ' AND discord_id = ?' : ''}`,
+      discordUserId ? [id, discordUserId] : [id],
+    );
+    const existing = rows[0];
+    if (!existing) return { ok: false, error: 'not-found' };
+
     const [result] = await pool.execute(
       `DELETE FROM ${STRIKE_TABLE} WHERE id = ?`,
       [id],
     );
     if (!result.affectedRows) return { ok: false, error: 'not-found' };
-    return { ok: true, id };
+    return { ok: true, id, previousReason: existing.raison };
   } catch (error) {
     console.error('[SanctionsService] Error deleting strike:', error.message);
     return { ok: false, error: 'delete-failed' };

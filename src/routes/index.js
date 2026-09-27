@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import { requireAuth } from '../auth/session.js';
 import { webConfig } from '../config.js';
 import {
@@ -11,6 +11,7 @@ import {
 } from '../services/discord.js';
 import { getLinkedRobloxData } from '../services/roblox.js';
 import { fetchMemberSanctions, createStrike, updateStrikeReason, deleteStrike, STRIKE_ERROR_MESSAGES } from '../services/sanctions.js';
+import { recordStrikeEvent, STRIKE_ACTIONS } from '../services/strike-events.js';
 import { fetchMemberDeaths } from '../services/deaths.js';
 import { fetchAllLinkedMembers, fetchLinkedMember } from '../services/members.js';
 import { getGrades, getRoleLabels } from '../config/roles.js';
@@ -35,7 +36,7 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       res.locals.isStaff = req.memberData.hasTargetRole;
       // Member management role (supervision tab: permadeath, sanctions, member directory)
       res.locals.isMemberManagement = hasMemberManagementRole(req.memberData);
-      // Comité d'éthique: may open a member file and manage its strikes.
+      // Comit� d'�thique: may open a member file and manage its strikes.
       res.locals.canManageStrikes = hasTargetRole(req.memberData);
       // Forms/documentation management role, independent from the sanctions one.
       res.locals.isFormManager = hasFormsRole(req.memberData);
@@ -101,8 +102,8 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
     } catch (error) {
       console.error('[WebRoutes] Error rendering dashboard:', error);
       return res.status(500).render('error', {
-        title: 'Erreur lors du chargement de lâ€™accueil',
-        message: 'Impossible de charger les informations du compte. Veuillez rÃ©essayer plus tard.',
+        title: 'Erreur lors du chargement de l’accueil',
+        message: 'Impossible de charger les informations du compte. Veuillez réessayer plus tard.',
       });
     }
   });
@@ -118,27 +119,27 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       console.error('[WebRoutes] Error rendering profile:', error);
       res.status(500).render('error', {
         title: 'Erreur lors du chargement du profil',
-        message: 'Impossible de charger lâ€™ensemble des informations du profil. Veuillez rÃ©essayer plus tard.',
+        message: 'Impossible de charger l’ensemble des informations du profil. Veuillez réessayer plus tard.',
       });
     }
   });
 
   router.get('/terms', (req, res) => {
-    res.render('terms', { title: 'Conditions GÃ©nÃ©rales dâ€™Utilisation' });
+    res.render('terms', { title: 'Conditions Générales d’Utilisation' });
   });
 
   router.get('/privacy', (req, res) => {
-    res.render('privacy', { title: 'Politique de ConfidentialitÃ©' });
+    res.render('privacy', { title: 'Politique de Confidentialité' });
   });
 
-  // Â« Candidatures Â» is open to any connected member; Â« RÃ©ponses Â» and the
+  // « Candidatures » is open to any connected member; « Réponses » and the
   // documentation manager require the forms role.
   router.use('/candidatures', createFormsRouter({ pool, fetchFn }));
   router.use('/reponses', createResponsesRouter({ pool, fetchFn }));
   router.use('/documentation', createDocumentationRouter({ pool }));
 
-  // A member file is reachable by the supervision role and by the comité
-  // d'éthique, which needs it to manage strikes. The tab itself is rendered
+  // A member file is reachable by the supervision role and by the comit�
+  // d'�thique, which needs it to manage strikes. The tab itself is rendered
   // for either role.
   router.use('/members', requireAuth, requireSupervisionAccess);
 
@@ -171,7 +172,7 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       console.error('[WebRoutes] Error loading member directory:', error);
       res.status(500).render('error', {
         title: 'Erreur lors du chargement des membres',
-        message: 'Impossible de charger la liste des membres. Veuillez rÃ©essayer plus tard.',
+        message: 'Impossible de charger la liste des membres. Veuillez réessayer plus tard.',
       });
     }
   });
@@ -182,7 +183,7 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       if (!member) {
         return res.status(404).render('error', {
           title: 'Membre introuvable',
-          message: 'Aucun lien Roblox-Discord trouvÃ© pour ce compte.',
+          message: 'Aucun lien Roblox-Discord trouvé pour ce compte.',
         });
       }
       const targetUser = {
@@ -207,12 +208,12 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       console.error('[WebRoutes] Error rendering supervised profile:', error);
       res.status(500).render('error', {
         title: 'Erreur lors du chargement du profil',
-        message: 'Impossible de charger la fiche de ce membre. Veuillez rÃ©essayer plus tard.',
+        message: 'Impossible de charger la fiche de ce membre. Veuillez réessayer plus tard.',
       });
     }
   });
 
-  // ── Strike management (comité d'éthique) ──────────────────────────────
+  // -- Strike management (comit� d'�thique) ------------------------------
   // Writes straight into the `strikes` table shared with the Discord bot, so
   // a change here is immediately visible to the bot's moderation commands.
   // The page is re-rendered rather than redirected so the reason text survives
@@ -237,31 +238,105 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
     return res.redirect(`/members/${target}#sanctions`);
   }
 
+  /**
+   * Resolves the display names the Discord relay shows. The acting user always
+   * comes from the sealed session, never from the request body, so a staff
+   * member cannot forge who performed an action.
+   */
+  async function resolveStrikeAuditNames(req) {
+    const actorName = req.session.user.globalName || req.session.user.username || null;
+    let targetName = null;
+    try {
+      const member = await fetchLinkedMember(req.params.discordUserId, { pool, sitePool, fetchFn });
+      targetName = member?.global_name || member?.discord_username || null;
+    } catch {
+      // A missing mirror row only costs the log its pretty name.
+    }
+    return { actorName, targetName };
+  }
+
   router.post(
     '/members/:discordUserId/strikes',
     requireTargetRole,
-    async (req, res) => handleStrikeAction(req, res, (target) => createStrike({
-      discordUserId: target,
-      moderatorId: req.session.user.id,
-      reason: req.body?.reason,
-    }, pool)),
+    async (req, res) => {
+      const target = req.params.discordUserId;
+      return handleStrikeAction(req, res, async () => {
+        const result = await createStrike({
+          discordUserId: target,
+          moderatorId: req.session.user.id,
+          reason: req.body?.reason,
+        }, pool);
+        if (!result.ok) return result;
+
+        const names = await resolveStrikeAuditNames(req);
+        await recordStrikeEvent({
+          strikeId: result.id,
+          action: STRIKE_ACTIONS.CREATED,
+          targetDiscordId: target,
+          targetName: names.targetName,
+          actorDiscordId: req.session.user.id,
+          actorName: names.actorName,
+          newReason: req.body?.reason,
+        }, pool);
+        return result;
+      });
+    },
   );
 
   router.post(
     '/members/:discordUserId/strikes/:strikeId/edit',
     requireTargetRole,
-    async (req, res) => handleStrikeAction(req, res, () => updateStrikeReason({
-      strikeId: req.params.strikeId,
-      reason: req.body?.reason,
-    }, pool)),
+    async (req, res) => {
+      const target = req.params.discordUserId;
+      return handleStrikeAction(req, res, async () => {
+        const result = await updateStrikeReason({
+          strikeId: req.params.strikeId,
+          reason: req.body?.reason,
+          discordUserId: target,
+        }, pool);
+        if (!result.ok) return result;
+
+        const names = await resolveStrikeAuditNames(req);
+        await recordStrikeEvent({
+          strikeId: result.id,
+          action: STRIKE_ACTIONS.UPDATED,
+          targetDiscordId: target,
+          targetName: names.targetName,
+          actorDiscordId: req.session.user.id,
+          actorName: names.actorName,
+          previousReason: result.previousReason,
+          newReason: result.newReason,
+        }, pool);
+        return result;
+      });
+    },
   );
 
   router.post(
     '/members/:discordUserId/strikes/:strikeId/remove',
     requireTargetRole,
-    async (req, res) => handleStrikeAction(req, res, () => deleteStrike({
-      strikeId: req.params.strikeId,
-    }, pool)),
+    async (req, res) => {
+      const target = req.params.discordUserId;
+      return handleStrikeAction(req, res, async () => {
+        const result = await deleteStrike({
+          strikeId: req.params.strikeId,
+          discordUserId: target,
+        }, pool);
+        if (!result.ok) return result;
+
+        const names = await resolveStrikeAuditNames(req);
+        await recordStrikeEvent({
+          strikeId: result.id,
+          action: STRIKE_ACTIONS.DELETED,
+          targetDiscordId: target,
+          targetName: names.targetName,
+          actorDiscordId: req.session.user.id,
+          actorName: names.actorName,
+          previousReason: result.previousReason,
+        }, pool);
+        return result;
+      });
+    },
   );
 
   return router;

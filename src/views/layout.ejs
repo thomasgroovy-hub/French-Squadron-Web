@@ -513,25 +513,6 @@
     .btn-danger-text:hover { border-color: var(--danger); }
 
     /* Easter egg rose */
-    .rose-toast {
-      position: fixed;
-      left: 50%;
-      bottom: 1.5rem;
-      transform: translateX(-50%) translateY(150%);
-      background: var(--bg-elevated);
-      color: var(--text-main);
-      border: 1px solid var(--accent);
-      border-radius: 999px;
-      padding: 0.5rem 1.1rem;
-      font-size: 0.85rem;
-      box-shadow: var(--shadow);
-      opacity: 0;
-      transition: transform 0.35s ease, opacity 0.35s ease;
-      pointer-events: none;
-      z-index: 50;
-    }
-    .rose-toast.is-visible { transform: translateX(-50%) translateY(0); opacity: 1; }
-
     [data-theme="rose"] .nav-mark { background: var(--accent); color: var(--bg-main); }
 
   </style>
@@ -612,7 +593,6 @@
     <span>Site-66 &copy; <%= new Date().getFullYear() %></span>
     <span> · <a href="/terms">Conditions d’utilisation</a> · <a href="/privacy">Confidentialité</a></span>
   </footer>
-  <div class="rose-toast" id="rose-toast" role="status" aria-live="polite">Le site est devenu rose 🐈</div>
   <script>
     (function () {
       var STORAGE_KEY = 'site66-theme';
@@ -620,17 +600,10 @@
       var THEMES = ['light', 'dark', 'rose'];
       var toggle = document.getElementById('theme-toggle');
       var meta = document.getElementById('theme-color-meta');
-      var toast = document.getElementById('rose-toast');
       if (!toggle) return;
 
       function isRose() {
         return document.documentElement.getAttribute('data-theme') === 'rose';
-      }
-
-      function showToast() {
-        if (!toast) return;
-        toast.classList.add('is-visible');
-        window.setTimeout(function () { toast.classList.remove('is-visible'); }, 3200);
       }
 
       function applyTheme(theme) {
@@ -673,7 +646,6 @@
           if (buffer === 'meow' && !isRose()) {
             applyTheme('rose');
             try { window.localStorage.setItem(ROSE_KEY, '1'); } catch (error) {}
-            showToast();
           }
         } else if (event.key === 'Backspace') {
           buffer = buffer.slice(0, -1);

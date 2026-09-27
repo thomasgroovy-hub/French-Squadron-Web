@@ -11,6 +11,7 @@ import {
 } from '../src/services/discord.js';
 import { getLinkedRobloxData } from '../src/services/roblox.js';
 import { fetchMemberSanctions, createStrike, updateStrikeReason, deleteStrike } from '../src/services/sanctions.js';
+import { recordStrikeEvent, ensureStrikeEventsTable, STRIKE_ACTIONS } from '../src/services/strike-events.js';
 import { hasTargetRole, hasSupervisionAccess } from '../src/auth/guards.js';
 import { recordSiteLogin } from '../src/services/members.js';
 import { getRoleLabels } from '../src/config/roles.js';
@@ -267,50 +268,97 @@ test('createStrike truncates a reason longer than the column', async () => {
   assert.equal(calls[0][2].length, 1000);
 });
 
-test('updateStrikeReason rewrites the reason and keeps the original author', async () => {
+/** Routes a mocked statement to the right shape: reads yield rows, writes a count. */
+function strikePool({ rows = [], affected = 1 } = {}) {
   const calls = [];
-  const mockPool = {
+  return {
+    calls,
+    // The audit writer self-creates its table through `query`, not `execute`.
+    query: async (sql) => {
+      calls.push({ kind: 'query', query: sql });
+      return [[]];
+    },
     execute: async (query, params) => {
-      calls.push({ query, params });
-      return [{ affectedRows: 1 }];
+      calls.push({ kind: 'execute', query, params });
+      if (/^\s*SELECT/i.test(query)) return [rows];
+      return [{ affectedRows: affected, insertId: rows[0]?.id ?? 1 }];
     },
   };
+}
 
-  const result = await updateStrikeReason({ strikeId: '43', reason: 'Raison corrigée' }, mockPool);
+test('updateStrikeReason rewrites the reason, keeps the author and reports the old value', async () => {
+  const pool = strikePool({ rows: [{ id: 43, raison: 'Ancienne raison' }] });
 
-  assert.deepEqual(result, { ok: true, id: 43 });
-  assert.match(calls[0].query, /UPDATE strikes SET raison = \? WHERE id = \?/);
-  assert.ok(!/moderator_discord_id/.test(calls[0].query), 'must not reassign the strike');
-  assert.deepEqual(calls[0].params, ['Raison corrigée', 43]);
+  const result = await updateStrikeReason({ strikeId: '43', reason: 'Raison corrigée' }, pool);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.id, 43);
+  assert.equal(result.previousReason, 'Ancienne raison');
+  assert.equal(result.newReason, 'Raison corrigée');
+
+  const update = pool.calls.find((c) => /UPDATE/.test(c.query));
+  assert.match(update.query, /UPDATE strikes SET raison = \? WHERE id = \?/);
+  assert.ok(!/moderator_discord_id/.test(update.query), 'must not reassign the strike');
+  assert.deepEqual(update.params, ['Raison corrigée', 43]);
+});
+
+test('a strike that keeps its exact reason still counts as a success', async () => {
+  // MySQL reports *changed* rows for UPDATE, so affectedRows would be 0 here.
+  // Existence has to come from the SELECT, not from the write.
+  const pool = strikePool({ rows: [{ id: 43, raison: 'Identique' }], affected: 0 });
+
+  const result = await updateStrikeReason({ strikeId: '43', reason: 'Identique' }, pool);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.id, 43);
+});
+
+test('an edit cannot reach a strike belonging to another member', async () => {
+  const pool = strikePool({ rows: [] });
+
+  const result = await updateStrikeReason(
+    { strikeId: '43', reason: 'x', discordUserId: '999999999999999999' },
+    pool,
+  );
+
+  assert.deepEqual(result, { ok: false, error: 'not-found' });
+  assert.match(pool.calls[0].query, /AND discord_id = \?/);
+  assert.deepEqual(pool.calls[0].params, [43, '999999999999999999']);
+  assert.ok(!pool.calls.some((c) => /UPDATE/.test(c.query)), 'must not write');
 });
 
 test('updateStrikeReason reports a missing strike instead of silently succeeding', async () => {
-  const mockPool = { execute: async () => [{ affectedRows: 0 }] };
-
   assert.deepEqual(
-    await updateStrikeReason({ strikeId: '999', reason: 'x' }, mockPool),
+    await updateStrikeReason({ strikeId: '999', reason: 'x' }, strikePool({ rows: [] })),
     { ok: false, error: 'not-found' },
   );
   assert.deepEqual(
-    await updateStrikeReason({ strikeId: 'abc', reason: 'x' }, mockPool),
+    await updateStrikeReason({ strikeId: 'abc', reason: 'x' }, strikePool()),
     { ok: false, error: 'invalid-strike' },
   );
 });
 
-test('deleteStrike removes the row by id', async () => {
-  const calls = [];
-  const mockPool = {
-    execute: async (query, params) => {
-      calls.push({ query, params });
-      return [{ affectedRows: 1 }];
-    },
-  };
+test('deleteStrike removes the row by id and returns what it removed', async () => {
+  const pool = strikePool({ rows: [{ id: 43, raison: 'Raison effacée' }] });
 
-  const result = await deleteStrike({ strikeId: '43' }, mockPool);
+  const result = await deleteStrike({ strikeId: '43' }, pool);
 
-  assert.deepEqual(result, { ok: true, id: 43 });
-  assert.match(calls[0].query, /DELETE FROM strikes WHERE id = \?/);
-  assert.deepEqual(calls[0].params, [43]);
+  assert.equal(result.ok, true);
+  assert.equal(result.id, 43);
+  assert.equal(result.previousReason, 'Raison effacée');
+
+  const del = pool.calls.find((c) => /DELETE/.test(c.query));
+  assert.match(del.query, /DELETE FROM strikes WHERE id = \?/);
+  assert.deepEqual(del.params, [43]);
+});
+
+test('a removal cannot reach a strike belonging to another member', async () => {
+  const pool = strikePool({ rows: [] });
+
+  const result = await deleteStrike({ strikeId: '43', discordUserId: '999999999999999999' }, pool);
+
+  assert.deepEqual(result, { ok: false, error: 'not-found' });
+  assert.ok(!pool.calls.some((c) => /DELETE/.test(c.query)), 'must not delete');
 });
 
 test('a failing strike write returns an error code instead of throwing', async () => {
@@ -328,6 +376,74 @@ test('a failing strike write returns an error code instead of throwing', async (
     await deleteStrike({ strikeId: '1' }, mockPool),
     { ok: false, error: 'delete-failed' },
   );
+});
+
+test('recordStrikeEvent logs the acting user taken from the session, not the form', async () => {
+  const pool = strikePool();
+  await recordStrikeEvent({
+    strikeId: 7,
+    action: STRIKE_ACTIONS.CREATED,
+    targetDiscordId: STRIKE_TARGET,
+    targetName: 'Membre Test',
+    actorDiscordId: STRIKE_MODERATOR,
+    actorName: 'Modérateur',
+    newReason: 'Harcèlement',
+  }, pool);
+
+  const insert = pool.calls.find((c) => /INSERT INTO strike_events/.test(c.query));
+  assert.ok(insert, 'an audit row must be written');
+  // strike_id, action, target_id, target_name, actor_id, actor_name, before, after
+  assert.equal(insert.params[1], 'created');
+  assert.equal(insert.params[2], STRIKE_TARGET);
+  assert.equal(insert.params[3], 'Membre Test');
+  assert.equal(insert.params[4], STRIKE_MODERATOR);
+  assert.equal(insert.params[5], 'Modérateur');
+  assert.equal(insert.params[6], null, 'a creation has no previous reason');
+  assert.equal(insert.params[7], 'Harcèlement');
+});
+
+test('recordStrikeEvent refuses an unknown action and a missing actor', async () => {
+  const pool = strikePool();
+
+  assert.equal(await recordStrikeEvent({
+    action: 'bogus', targetDiscordId: STRIKE_TARGET, actorDiscordId: STRIKE_MODERATOR,
+  }, pool), false);
+  assert.equal(await recordStrikeEvent({
+    action: STRIKE_ACTIONS.CREATED, targetDiscordId: STRIKE_TARGET,
+  }, pool), false);
+  assert.ok(!pool.calls.some((c) => /INSERT/.test(c.query)));
+});
+
+test('the audit table is append-only: an edit keeps both reasons', async () => {
+  const pool = strikePool();
+
+  await recordStrikeEvent({
+    strikeId: 7,
+    action: STRIKE_ACTIONS.UPDATED,
+    targetDiscordId: STRIKE_TARGET,
+    actorDiscordId: STRIKE_MODERATOR,
+    previousReason: 'Avant',
+    newReason: 'Après',
+  }, pool);
+  await recordStrikeEvent({
+    strikeId: 7,
+    action: STRIKE_ACTIONS.DELETED,
+    targetDiscordId: STRIKE_TARGET,
+    actorDiscordId: STRIKE_MODERATOR,
+    previousReason: 'Après',
+  }, pool);
+
+  const inserts = pool.calls.filter((c) => /INSERT INTO strike_events/.test(c.query));
+  assert.equal(inserts.length, 2, 'each change appends its own row');
+  assert.equal(inserts[0].params[6], 'Avant');
+  assert.equal(inserts[0].params[7], 'Après');
+  assert.equal(inserts[1].params[6], 'Après');
+  assert.equal(inserts[1].params[7], null);
+});
+
+test('the audit DDL keeps a relayed flag so a restart cannot resend history', async () => {
+  const pool = { query: async () => [[]] };
+  assert.equal(await ensureStrikeEventsTable(pool), true);
 });
 
 test('hasTargetRole reads the committee flag, and supervision accepts either role', () => {
