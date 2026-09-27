@@ -1,4 +1,4 @@
-import { getDatabasePool } from '../database.js';
+import { getDatabasePool, getPoolKey } from '../database.js';
 
 export const FORM_STATUS = Object.freeze({
   DRAFT: 'draft',
@@ -26,11 +26,6 @@ const initializedPools = new Map();
  * `CREATE TABLE IF NOT EXISTS` pattern as `services/members.js` so no
  * migration step is required on deploy.
  */
-function getPoolKey(pool) {
-  const config = pool.config || pool._config || {};
-  return `${config.host}:${config.database}`;
-}
-
 export async function ensureFormsTables(pool) {
   const poolKey = getPoolKey(pool);
   let initialization = initializedPools.get(poolKey);

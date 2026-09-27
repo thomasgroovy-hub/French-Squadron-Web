@@ -1,5 +1,5 @@
 import './helpers/env.js';
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { sealSession, unsealSession } from '../src/auth/session.js';
@@ -7,6 +7,7 @@ import {
   fetchGuildMemberRoles,
   formatAccountAge,
   getDiscordCreationDate,
+  invalidateGuildMemberCache,
 } from '../src/services/discord.js';
 import { getLinkedRobloxData } from '../src/services/roblox.js';
 import { fetchMemberSanctions } from '../src/services/sanctions.js';
@@ -14,6 +15,13 @@ import { recordSiteLogin } from '../src/services/members.js';
 import { getRoleLabels } from '../src/config/roles.js';
 import { createApp } from '../src/server.js';
 import { webConfig } from '../src/config.js';
+
+// Guild member roles are cached in-process for a short TTL to keep Discord from
+// rate limiting us. Every test in this file asserts on role-dependent output,
+// so the cache must not leak between them.
+beforeEach(() => {
+  invalidateGuildMemberCache();
+});
 
 test('session encryption seals and unseals data with tamper protection', () => {
   const secret = 'my-super-secret-test-key-32byteslong';

@@ -8,18 +8,9 @@ import { createOAuthRouter } from './auth/oauth.js';
 import { createMainRouter } from './routes/index.js';
 import { createPermadeathRouter } from './routes/permadeath.js';
 
-import { getDatabasePool, getSiteDatabasePool } from './database.js';
+import { getDatabasePool, getSiteDatabasePool, findMissingEnv } from './database.js';
 
-/**
- * Wrapper pour intercepter les erreurs asynchrones dans les routes Express.
- * Sans cela, les exceptions dans les handlers async ne sont pas catchées
- * par le middleware d'erreur Express 4 et font crasher le process (502).
- */
-function asyncHandler(fn) {
-  return (req, res, next) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
-  };
-}
+const SITE_DATABASE_VARS = ['SITE_MYSQL_HOST', 'SITE_MYSQL_USER', 'SITE_MYSQL_PASSWORD', 'SITE_MYSQL_DATABASE'];
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -95,7 +86,13 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
     console.error('[WebServer] Unhandled error:', err);
-    res.status(500).render('error', {
+    // Si la réponse a déjà commencé, la réécriture des headers lèverait
+    // ERR_HTTP_HEADERS_SENT : on délègue au handler par défaut d'Express,
+    // qui coupe la connexion. Sans cette garde, le rendu de la page
+    // d'erreur pouvait rester bloqué jusqu'au timeout du load balancer (502).
+    if (res.headersSent) return next(err);
+    const status = Number.isInteger(err?.status) ? err.status : 500;
+    res.status(status).render('error', {
       title: 'Erreur interne du serveur',
       message: 'Une erreur inattendue est survenue lors du traitement de la requête.',
     });
@@ -106,34 +103,68 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
 
 export function startWebServer({
   port = webConfig.port,
-  pool = getDatabasePool(),
+  pool,
   sitePool,
 } = {}) {
+  const { valid, missing } = validateWebConfig();
+  if (!valid) {
+    console.warn(
+      `[WebServer] Warning: Missing environment variables: ${missing.join(', ')}. Some OAuth features will be unavailable until set.`,
+    );
+  }
+
+  let mainPool = pool;
+  if (mainPool === undefined) {
+    try {
+      mainPool = getDatabasePool();
+    } catch (error) {
+      console.error([
+        '',
+        '================================================================',
+        ' FPCS Companion Web refuses to start: no main MySQL pool.',
+        ` Cause: ${error.message}`,
+        '',
+        ' Candidatures, responses, documentation, sanctions and Deaths all',
+        ' read from this pool. Booting anyway would let the host report the',
+        ' service as live while every one of those pages returns an error,',
+        ' which is far harder to diagnose than a failed start.',
+        '================================================================',
+        '',
+      ].join('\n'));
+      process.exit(1);
+    }
+  }
+
   if (sitePool === undefined) {
+    const missingSiteVars = findMissingEnv(SITE_DATABASE_VARS);
+    if (missingSiteVars.length > 0) {
+      console.warn(
+        `[WebServer] The site database pool is disabled (missing: ${missingSiteVars.join(', ')}). `
+        + 'Roblox verification and the member directory will report members as unlinked.',
+      );
+    }
     try {
       sitePool = getSiteDatabasePool();
     } catch {
       sitePool = null;
     }
   }
-  const { valid, missing } = validateWebConfig();
-  if (!valid) {
-    console.warn(
-      `[WebServer] Warning: Missing environment variables: ${missing.join(', ')}. Some OAuth features will be unavailable until set.`
-    );
-  }
 
-  // Gestionnaires globaux pour éviter les crashs silencieux (502)
+  // Uncaught exceptions leave the process in an undefined state: keeping it
+  // alive would serve corrupted responses and hang in-flight requests until
+  // the load balancer times them out. Exiting lets the host restart us with
+  // a clean process and the real cause visible in the logs.
   process.on('uncaughtException', (err) => {
     console.error('[WebServer] UNCAUGHT EXCEPTION:', err);
-    // Ne pas exit(1) pour éviter le redémarrage en boucle sur Render
+    process.exit(1);
   });
 
-  process.on('unhandledRejection', (reason, promise) => {
-    console.error('[WebServer] UNHANDLED REJECTION at:', promise, 'reason:', reason);
+  process.on('unhandledRejection', (reason) => {
+    console.error('[WebServer] UNHANDLED REJECTION:', reason);
+    process.exit(1);
   });
 
-  const app = createApp({ pool, sitePool });
+  const app = createApp({ pool: mainPool, sitePool });
   const server = app.listen(port, () => {
     console.log(`[WebServer] FPCS Companion Web listening on http://localhost:${port}`);
   });

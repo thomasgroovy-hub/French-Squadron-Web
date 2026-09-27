@@ -1,4 +1,4 @@
-import { getDatabasePool } from '../database.js';
+import { getDatabasePool, getPoolKey } from '../database.js';
 
 export const DOC_BLOCK_TYPES = Object.freeze({
   HEADING: 'heading',
@@ -10,11 +10,6 @@ export const DOC_BLOCK_TYPES = Object.freeze({
 export const DOC_BLOCK_TYPE_VALUES = Object.freeze(Object.values(DOC_BLOCK_TYPES));
 
 const initializedPools = new Map();
-
-function getPoolKey(pool) {
-  const config = pool.config || pool._config || {};
-  return `${config.host}:${config.database}`;
-}
 
 export async function ensureDocumentationTables(pool) {
   const poolKey = getPoolKey(pool);

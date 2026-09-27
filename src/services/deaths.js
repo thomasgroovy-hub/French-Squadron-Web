@@ -1,12 +1,7 @@
-import { getDatabasePool } from '../database.js';
+import { getDatabasePool, getPoolKey } from '../database.js';
 import { formatDate } from './discord.js';
 
 const initializedPools = new Map();
-
-function getPoolKey(pool) {
-  const config = pool.config || pool._config || {};
-  return `${config.host}:${config.database}`;
-}
 
 async function ensurePermadeathDeathsTable(pool) {
   const poolKey = getPoolKey(pool);

@@ -2,6 +2,7 @@
 import { requireAuth } from '../auth/session.js';
 import { webConfig } from '../config.js';
 import {
+  fetchGuildMemberDirectory,
   fetchGuildMemberRoles,
   fetchGuildRoleNames,
   formatAccountAge,
@@ -132,14 +133,20 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
   router.get('/members', async (req, res) => {
     try {
       const search = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
-      const users = await fetchAllLinkedMembers(search, { pool, sitePool, fetchFn });
+      // One roster request replaces the previous two per-member lookups per
+      // linked account, which is what triggered Discord's 429 rate limiting.
+      const memberDirectory = await fetchGuildMemberDirectory({ fetchFn });
+      const users = await fetchAllLinkedMembers(search, { pool, sitePool, fetchFn, memberDirectory });
       let nextIndex = 0;
       await Promise.all(Array.from({ length: Math.min(6, users.length) }, async () => {
         while (nextIndex < users.length) {
           const userIndex = nextIndex;
           nextIndex += 1;
           const member = users[userIndex];
-          const roleData = await fetchGuildMemberRoles({ userId: member.discord_user_id, fetchFn });
+          const known = memberDirectory?.get(member.discord_user_id);
+          const roleData = known
+            ? { roles: known.roles }
+            : await fetchGuildMemberRoles({ userId: member.discord_user_id, fetchFn });
           member.grades = getRoleLabels(roleData.roles);
         }
       }));

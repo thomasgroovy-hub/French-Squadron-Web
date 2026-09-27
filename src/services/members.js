@@ -1,12 +1,7 @@
-import { getDatabasePool, getSiteDatabasePool } from '../database.js';
+import { getDatabasePool, getSiteDatabasePool, getPoolKey } from '../database.js';
 import { webConfig } from '../config.js';
 
 const initializedPools = new Map();
-
-function getPoolKey(pool) {
-  const config = pool.config || pool._config || {};
-  return `${config.host}:${config.database}`;
-}
 
 let sitePoolInstance = null;
 function getSitePool() {
@@ -87,7 +82,7 @@ async function fetchDiscordUserViaBot(userId, { botToken = webConfig.discordToke
   }
 }
 
-export async function fetchAllLinkedMembers(search = '', { pool = getDatabasePool(), sitePool = getSitePool(), fetchFn = fetch } = {}) {
+export async function fetchAllLinkedMembers(search = '', { pool = getDatabasePool(), sitePool = getSitePool(), fetchFn = fetch, memberDirectory = null } = {}) {
   const readPool = sitePool || pool;
   if (!readPool) return [];
   try {
@@ -109,7 +104,11 @@ export async function fetchAllLinkedMembers(search = '', { pool = getDatabasePoo
 
     const members = [];
     for (const row of rows) {
-      const discordUser = await fetchDiscordUserViaBot(row.discord_user_id, { fetchFn });
+      // The bulk directory already carries the Discord identity, so a healthy
+      // roster costs zero extra API calls. Individual lookups stay as a
+      // fallback for members the directory does not know about.
+      const known = memberDirectory?.get(row.discord_user_id) || null;
+      const discordUser = known || await fetchDiscordUserViaBot(row.discord_user_id, { fetchFn });
       members.push({
         discord_user_id: row.discord_user_id,
         discord_username: discordUser?.username || 'Inconnu',

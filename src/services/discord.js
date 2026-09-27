@@ -56,6 +56,37 @@ export function formatDate(date) {
 const guildRoleNameCache = new Map();
 const GUILD_ROLE_TTL_MS = 2 * 60 * 1000;
 
+const guildMemberCache = new Map();
+const GUILD_MEMBER_TTL_MS = 30 * 1000;
+const GUILD_MEMBER_CACHE_MAX = 500;
+
+function readGuildMemberCache(key) {
+  const cached = guildMemberCache.get(key);
+  if (!cached) return null;
+  if (cached.expires <= Date.now()) {
+    guildMemberCache.delete(key);
+    return null;
+  }
+  return cached.value;
+}
+
+function writeGuildMemberCache(key, value) {
+  if (guildMemberCache.size >= GUILD_MEMBER_CACHE_MAX) {
+    const oldest = guildMemberCache.keys().next().value;
+    if (oldest !== undefined) guildMemberCache.delete(oldest);
+  }
+  guildMemberCache.set(key, { value, expires: Date.now() + GUILD_MEMBER_TTL_MS });
+}
+
+/**
+ * Drops cached role data for a member so a freshly granted role is visible
+ * immediately instead of after the cache TTL.
+ */
+export function invalidateGuildMemberCache(userId, guildId = webConfig.guildId) {
+  if (userId) guildMemberCache.delete(`${guildId}:${userId}`);
+  else guildMemberCache.clear();
+}
+
 export async function fetchGuildRoleNames({
   guildId = webConfig.guildId,
   botToken = webConfig.discordToken,
@@ -119,6 +150,10 @@ export async function fetchGuildMemberRoles({
     };
   }
 
+  const cacheKey = `${guildId}:${userId}`;
+  const cachedResult = readGuildMemberCache(cacheKey);
+  if (cachedResult) return cachedResult;
+
   try {
     const response = await fetchFn(
       `https://discord.com/api/v10/guilds/${guildId}/members/${userId}`,
@@ -131,14 +166,19 @@ export async function fetchGuildMemberRoles({
     );
 
     if (response.status === 404) {
-      return {
+      // Not in the guild is a stable fact: safe to cache.
+      const absent = {
         inGuild: false,
         roles: [],
         hasTargetRole: false,
       };
+      writeGuildMemberCache(cacheKey, absent);
+      return absent;
     }
 
     if (!response.ok) {
+      // 429 / 5xx are transient. Caching them would freeze the "no roles"
+      // verdict and keep denying access after the rate limit clears.
       console.warn(`[DiscordService] Guild member fetch returned ${response.status} for user ${userId}`);
       return {
         inGuild: false,
@@ -151,12 +191,14 @@ export async function fetchGuildMemberRoles({
     const roles = Array.isArray(member.roles) ? member.roles : [];
     const hasTargetRole = roles.includes(webConfig.targetRoleId);
 
-    return {
+    const result = {
       inGuild: true,
       nickname: member.nick || null,
       roles,
       hasTargetRole,
     };
+    writeGuildMemberCache(cacheKey, result);
+    return result;
   } catch (error) {
     console.error(`[DiscordService] Error fetching member roles for ${userId}:`, error.message);
     return {
@@ -169,6 +211,73 @@ export async function fetchGuildMemberRoles({
 }
 
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
+
+function toDiscordAvatarUrl(user) {
+  if (!user) return null;
+  if (user.avatar) {
+    const extension = user.avatar.startsWith('a_') ? 'gif' : 'png';
+    return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${extension}?size=256`;
+  }
+  return `https://cdn.discordapp.com/embed/avatars/${Number(user.discriminator || 0) % 5}.png`;
+}
+
+/**
+ * Fetches the whole guild roster in as few requests as Discord allows
+ * (1000 members per call). This replaces the per-member N+1 that used to
+ * exhaust the global rate limit and made the Supervision page return 429s.
+ *
+ * Returns `null` when the endpoint is unusable (for example when the bot
+ * lacks the Guild Members intent) so callers can fall back to individual
+ * lookups instead of failing.
+ */
+export async function fetchGuildMemberDirectory({
+  guildId = webConfig.guildId,
+  botToken = webConfig.discordToken,
+  fetchFn = fetch,
+} = {}) {
+  if (!botToken || !guildId) return null;
+
+  const directory = new Map();
+  let after = null;
+
+  try {
+    for (let page = 0; page < 10; page += 1) {
+      const url = `${DISCORD_API_BASE}/guilds/${guildId}/members?limit=1000${after ? `&after=${after}` : ''}`;
+      const response = await fetchFn(url, {
+        headers: { Authorization: `Bot ${botToken}` },
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (!response.ok) {
+        console.warn(`[DiscordService] Bulk guild member fetch returned ${response.status}; falling back to per-member lookups.`);
+        return null;
+      }
+
+      const entries = await response.json();
+      if (!Array.isArray(entries) || entries.length === 0) break;
+
+      for (const entry of entries) {
+        const user = entry?.user;
+        if (!user?.id) continue;
+        directory.set(user.id, {
+          username: user.username,
+          globalName: user.global_name || user.username,
+          avatarUrl: toDiscordAvatarUrl(user),
+          roles: Array.isArray(entry.roles) ? entry.roles : [],
+        });
+      }
+
+      if (entries.length < 1000) break;
+      after = entries[entries.length - 1]?.user?.id;
+      if (!after) break;
+    }
+
+    return directory;
+  } catch (error) {
+    console.warn(`[DiscordService] Bulk guild member fetch failed: ${error.message}`);
+    return null;
+  }
+}
 
 /**
  * Adds a single role to a guild member through the Bot token.
@@ -198,7 +307,10 @@ export async function grantGuildMemberRole({
       }
     );
 
-    if (response.status === 204 || response.ok) return { ok: true, status: response.status };
+    if (response.status === 204 || response.ok) {
+      invalidateGuildMemberCache(userId, guildId);
+      return { ok: true, status: response.status };
+    }
     return { ok: false, status: response.status, error: `Discord a refusé l’attribution du rôle (HTTP ${response.status}).` };
   } catch (error) {
     console.error(`[DiscordService] Error granting role ${roleId} to ${userId}:`, error.message);

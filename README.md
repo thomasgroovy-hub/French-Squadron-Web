@@ -36,7 +36,10 @@ cp .env.example .env
 | `WEB_TARGET_ROLE_ID` | Rôle donnant accès au panneau de sanctions sur une fiche profil |
 | `WEB_FORMS_ROLE_ID` | Rôle de gestion des candidatures, réponses et documentation |
 | `WEB_FORMS_PUBLISH_COOLDOWN_MINUTES` | Délai minimum entre deux publications d'un même créateur |
-| `MYSQL_*` | Identifiants de connexion MySQL (host, port, user, password, database) |
+| `WEB_MEMBER_MANAGEMENT_ROLE_ID` | Rôle de l'onglet Supervision (`/members`) : annuaire, Deaths, sanctions des autres fiches |
+| `MYSQL_*` | Identifiants de connexion MySQL du pool principal (host, port, user, password, database) |
+| `SITE_MYSQL_*` | Base du site (miroir `roblox_links`). Facultatif : sans elle, les membres apparaissent non liés |
+| `PERMADEATH_WEBHOOK_SECRET` | Secret HMAC du webhook Deaths |
 
 `SESSION_SECRET` n'a **pas** de valeur par défaut : sans elle, les cookies de session seraient signables par n'importe qui. Générer avec :
 
@@ -48,10 +51,11 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 ## Rôles
 
-Deux rôles totalement indépendants, sans hiérarchie entre eux :
+Trois rôles totalement indépendants, sans hiérarchie entre eux :
 
-- `WEB_TARGET_ROLE_ID` : lecture du dossier de sanctions sur une fiche profil.
+- `WEB_TARGET_ROLE_ID` : lecture du dossier de sanctions sur **sa propre** fiche profil.
 - `WEB_FORMS_ROLE_ID` : création et gestion des formulaires, traitement des réponses, documentation.
+- `WEB_MEMBER_MANAGEMENT_ROLE_ID` : onglet Supervision (`/members`) — annuaire des membres, historique Deaths et sanctions des autres fiches.
 
 ## Démarrage
 
