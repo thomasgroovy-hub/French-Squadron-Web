@@ -11,3 +11,8 @@ process.env.DISCORD_APPLICATION_ID ||= '123456789012345678';
 process.env.DISCORD_CLIENT_ID ||= '123456789012345678';
 process.env.DISCORD_CLIENT_SECRET ||= 'test-client-secret';
 process.env.DISCORD_TOKEN ||= 'test-bot-token';
+// Liens publics de /documentation. Faux domaines et fausse invitation : la page
+// n'a besoin que de la forme d'une URL http(s), jamais d'une vraie destination.
+process.env.DOCUMENTATION_ETHICS_URL ||= 'https://docs.example.test/charte-ethique';
+process.env.DOCUMENTATION_FACILITY_URL ||= 'https://docs.example.test/charte-installation';
+process.env.DISCORD_URL ||= 'https://discord.gg/test-invitation';

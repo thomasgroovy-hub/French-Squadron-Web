@@ -34,8 +34,11 @@ cp .env.example .env
 | `WEB_PORT` | Port d'écoute du serveur Web (défaut : `3000`) |
 | `DISCORD_GUILD_ID` | ID du serveur Discord (défaut : French Squadron) |
 | `WEB_TARGET_ROLE_ID` | Rôle donnant accès au panneau de sanctions sur une fiche profil |
-| `WEB_FORMS_ROLE_ID` | Rôle de gestion des candidatures, réponses et documentation |
+| `WEB_FORMS_ROLE_ID` | Rôle de gestion des candidatures et des réponses |
 | `WEB_FORMS_PUBLISH_COOLDOWN_MINUTES` | Délai minimum entre deux publications d'un même créateur |
+| `DOCUMENTATION_ETHICS_URL` | Lien public de la carte « Charte éthique » de `/documentation` |
+| `DOCUMENTATION_FACILITY_URL` | Lien public de la carte « Charte de l'installation » de `/documentation` |
+| `DISCORD_URL` | Invitation Discord, utilisée par la carte Discord de `/documentation` et par le footer |
 | `WEB_MEMBER_MANAGEMENT_ROLE_ID` | Rôle de l'onglet Supervision (`/members`) : annuaire, Deaths, sanctions des autres fiches |
 | `MYSQL_*` | Identifiants de connexion MySQL du pool principal (host, port, user, password, database) |
 | `SITE_MYSQL_*` | Base du site (miroir `roblox_links`). Facultatif : sans elle, les membres apparaissent non liés |
@@ -49,12 +52,14 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 `DISCORD_REDIRECT_URI` doit correspondre exactement à l'URI déclarée dans le portail OAuth2 de l'application Discord, sinon la connexion échoue sur `invalid_request`.
 
+La page `/documentation` est publique : elle ne lit rien en base et se contente de ses trois liens, définis par `DOCUMENTATION_ETHICS_URL`, `DOCUMENTATION_FACILITY_URL` et `DISCORD_URL`. Ces URL sont publiques et se configurent donc directement comme variables d'environnement sur Railway. Sans valeur, les cartes de documentation retombent sur `/` et la carte Discord est rendue désactivée.
+
 ## Rôles
 
 Trois rôles totalement indépendants, sans hiérarchie entre eux :
 
 - `WEB_TARGET_ROLE_ID` : lecture du dossier de sanctions sur **sa propre** fiche profil.
-- `WEB_FORMS_ROLE_ID` : création et gestion des formulaires, traitement des réponses, documentation.
+- `WEB_FORMS_ROLE_ID` : création et gestion des formulaires, traitement des réponses.
 - `WEB_MEMBER_MANAGEMENT_ROLE_ID` : onglet Supervision (`/members`) — annuaire des membres, historique Deaths et sanctions des autres fiches.
 
 ## Démarrage

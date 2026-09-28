@@ -435,76 +435,17 @@
     .detail-list dt { color: var(--text-muted); font-size: 0.8rem; font-weight: 600; }
     .detail-list dd { margin: 0; font-size: 0.88rem; text-align: right; }
 
-    /* Documentation */
-    .doc-blocks { display: grid; gap: 0.35rem; }
-    .doc-block { padding: 0.35rem 0; }
-    .doc-heading { font-size: 1.15rem; font-weight: 700; margin-top: 1.1rem; }
-    .doc-block:first-child .doc-heading { margin-top: 0; }
-    .doc-text { color: var(--text-main); line-height: 1.65; font-size: 0.92rem; white-space: pre-wrap; }
-    .doc-link { font-weight: 600; }
-    .doc-bullets { padding-left: 1.25rem; display: grid; gap: 0.35rem; color: var(--text-main); font-size: 0.92rem; line-height: 1.6; }
-    .doc-preview { color: var(--text-muted); font-size: 0.82rem; margin-top: 0.35rem; }
-
-    /* Rendu markdown (sous-ensemble Discord) */
-    .doc-inline-code { padding: 0.1rem 0.3rem; border-radius: 4px; background: var(--bg-pill); border: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85em; }
-    .doc-code { padding: 0.7rem 0.85rem; border-radius: var(--radius-sm); background: var(--bg-pill); border: 1px solid var(--border); color: var(--text-main); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.84rem; line-height: 1.55; overflow-x: auto; white-space: pre; margin: 0.5rem 0; }
-    .doc-quote { margin: 0.5rem 0; padding: 0.15rem 0 0.15rem 0.75rem; border-left: 3px solid var(--border-strong); color: var(--text-muted); font-style: italic; }
-    .doc-md-list { margin: 0.4rem 0; padding-left: 1.3rem; display: grid; gap: 0.3rem; color: var(--text-main); font-size: 0.92rem; line-height: 1.6; }
-    .doc-spoiler { padding: 0.1rem 0.3rem; border-radius: 4px; background: currentColor; color: transparent; cursor: pointer; transition: color 0.15s ease; }
-    .doc-spoiler:hover { color: rgba(140, 140, 140, 0.35); }
-    .doc-spoiler.is-revealed { background: var(--bg-pill); color: var(--text-main); }
-    .doc-separator { border: 0; border-top: 1px solid var(--border); margin: 1.1rem 0; }
-
-    /* Éditeur : une simple liste de blocs, sans cadre autour de la page. */
-    .doc-editor { display: grid; gap: 0.15rem; }
-    .doc-row { position: relative; padding: 0.5rem 0.6rem; border: 1px solid transparent; border-radius: var(--radius-sm); }
-    .doc-row:hover, .doc-row:focus-within { border-color: var(--border); background: var(--bg-elevated); }
-    .doc-row.is-dragging { opacity: 0.4; }
-    .doc-row-head { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.35rem; }
-    .doc-row-grip { cursor: grab; color: var(--text-muted); opacity: 0; line-height: 0; }
-    .doc-row:hover .doc-row-grip, .doc-row:focus-within .doc-row-grip { opacity: 1; }
-    .doc-row-grip:active { cursor: grabbing; }
-    .doc-row-head .badge { opacity: 0; transition: opacity 0.12s ease; }
-    .doc-row:hover .doc-row-head .badge, .doc-row:focus-within .doc-row-head .badge { opacity: 1; }
-    /* Les actions n'apparaissent qu'au survol, ou quand le clavier y est. */
-    .doc-row-actions { display: flex; align-items: center; gap: 0.3rem; margin-left: auto; opacity: 0; transition: opacity 0.12s ease; }
-    .doc-row:hover .doc-row-actions, .doc-row:focus-within .doc-row-actions { opacity: 1; }
-    .doc-row-body > *:first-child { margin-top: 0; }
-    .doc-row-body > *:last-child { margin-bottom: 0; }
-    .doc-row[data-editing="true"] .doc-row-body { display: none; }
-
-    /* Point d'insertion entre deux blocs. */
-    .doc-insert { position: relative; display: flex; justify-content: center; height: 0; }
-    .doc-insert-btn { position: absolute; top: -0.7rem; display: grid; place-items: center; width: 1.4rem; height: 1.4rem; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: var(--bg-card); color: var(--text-muted); font-size: 0.95rem; line-height: 1; cursor: pointer; opacity: 0; transition: opacity 0.12s ease, color 0.12s ease; }
-    .doc-insert:hover .doc-insert-btn, .doc-insert:focus-within .doc-insert-btn, .doc-insert-btn[aria-expanded="true"] { opacity: 1; }
-    .doc-insert-btn:hover, .doc-insert-btn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
-    .doc-insert-form { position: absolute; top: 0.85rem; z-index: 5; display: grid; gap: 0.5rem; width: min(30rem, 80vw); padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-card); box-shadow: var(--shadow); }
-    .doc-insert-form[hidden] { display: none; }
-    .doc-insert-fields { display: grid; gap: 0.5rem; }
-    .doc-insert-fields[hidden] { display: none; }
-    .doc-insert-picker { display: flex; gap: 0.3rem; }
-    .doc-insert-picker button, .doc-toolbar button { display: grid; place-items: center; min-width: 1.9rem; height: 1.9rem; padding: 0 0.4rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-pill); color: var(--text-muted); font-size: 0.78rem; font-weight: 600; cursor: pointer; }
-    .doc-insert-picker svg { width: 14px; height: 14px; }
-    .doc-insert-picker button:hover, .doc-toolbar button:hover { color: var(--text-main); border-color: var(--border-strong); }
-    .doc-insert-picker button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
-
-    /* Édition en place : la barre d'outils flotte au-dessus du textarea. */
-    .doc-edit { display: grid; gap: 0.5rem; }
-    .doc-edit[hidden] { display: none; }
-    .doc-toolbar { position: sticky; top: 0; z-index: 4; display: inline-flex; gap: 0.25rem; align-self: flex-start; padding: 0.25rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); box-shadow: var(--shadow); }
-    .doc-edit-actions { display: flex; gap: 0.4rem; align-items: center; justify-content: flex-end; }
-    .doc-fields-hidden { display: none; }
-    .doc-noscript { display: grid; gap: 0.35rem; margin-top: 1rem; padding: 0.75rem; border: 1px dashed var(--border); border-radius: var(--radius-sm); }
-    .doc-noscript-row { display: flex; align-items: center; gap: 0.4rem; }
-    .doc-noscript-row form { display: inline; }
+    /* Documentation : trois liens de référence, habillés comme les raccourcis
+       du dashboard. Seule la grille est nouvelle, le reste est réutilisé. */
+    .doc-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1.2rem; }
+    /* Carte sans URL configurée : lisible, mais plus cliquable. */
+    .shortcut[aria-disabled="true"] { cursor: not-allowed; opacity: 0.55; }
+    .shortcut[aria-disabled="true"]:hover { border-color: var(--border); transform: none; }
 
     .empty-state { display: grid; justify-items: center; gap: 0.6rem; padding: 1.75rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-card); text-align: center; }
     .empty-state-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: var(--bg-pill); color: var(--text-muted); }
     .empty-state-icon svg { width: 18px; height: 18px; }
     .empty-state p { color: var(--text-muted); font-size: 0.82rem; }
-
-    /* Pour une doc vide, le point d'insertion unique est toujours visible. */
-    .empty-state + .doc-insert .doc-insert-btn { opacity: 1; }
 
     @media (max-width: 780px) {
       .profile-columns { grid-template-columns: 1fr; }
@@ -533,6 +474,7 @@
       .hero-avatar { width: 58px; height: 58px; }
       .hero-title { font-size: 1.65rem; }
       .dashboard-grid { grid-template-columns: 1fr; }
+      .doc-grid { grid-template-columns: 1fr; }
       .member-tools { flex-wrap: wrap; }
     }
     /* Gestion des avertissements (comité d'éthique) */
@@ -627,11 +569,6 @@
         <a href="/" class="nav-tab <%= currentPath === '/' ? 'is-active' : '' %>">Accueil</a>
         <a href="/profile" class="nav-tab <%= currentPath === '/profile' ? 'is-active' : '' %>">Profil</a>
         <a href="/candidatures" class="nav-tab <%= currentPath.startsWith('/candidatures') ? 'is-active' : '' %>">Candidatures</a>
-        <% if (webConfig?.documentationEnabled) { %>
-          <a href="/documentation" class="nav-tab <%= currentPath.startsWith('/documentation') ? 'is-active' : '' %>">Documentation</a>
-        <% } else { %>
-          <span class="nav-tab nav-tab-disabled" title="Module temporairement indisponible" aria-disabled="true">Documentation</span>
-        <% } %>
         <% if (typeof isFormManager !== 'undefined' && isFormManager) { %>
           <a href="/reponses" class="nav-tab <%= currentPath.startsWith('/reponses') ? 'is-active' : '' %>">Réponses</a>
         <% } %>
@@ -668,7 +605,9 @@
   <footer class="footer">
     <span>Site-66 &copy; <%= new Date().getFullYear() %></span>
     <span> · <a href="/terms">Conditions d’utilisation</a> · <a href="/privacy">Confidentialité</a>
-      · <a href="https://discord.gg/svdpdNdnAB" target="_blank" rel="noopener noreferrer">Discord</a>
+      <%# L'URL Discord vient de la configuration serveur (DISCORD_URL). Sans
+          variable définie, on retombe sur un lien inerte plutôt que cassé. %>
+      · <a href="<%= webConfig?.discordUrl || '#' %>" target="_blank" rel="noopener noreferrer">Discord</a>
       <%# TODO: remplacer par l'URL du groupe Roblox %>
       · <a href="#" target="_blank" rel="noopener noreferrer">Roblox</a>
     </span>

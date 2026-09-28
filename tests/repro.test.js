@@ -223,53 +223,6 @@ test('BUG 1: adding a question on an existing form reports success and refreshes
   }
 });
 
-test('BUG 2: a documentation link block round-trips through the database', async () => {
-  const pool = createFakePool();
-  const app = await startApp({ pool });
-  try {
-    const res = await app.post('/documentation/blocs', {
-      block_type: 'link',
-      title: 'Règlement',
-      content: '',
-      url: 'https://discord.com/channels/1487258655840669807/123456',
-    });
-    assert.equal(res.status, 302);
-    assert.match(res.headers.get('location'), /^\/documentation\?info=/);
-
-    const stored = pool.store.documentationBlocks[0];
-    assert.equal(stored.block_type, 'link');
-    assert.equal(stored.title, 'Règlement');
-    assert.equal(stored.url, 'https://discord.com/channels/1487258655840669807/123456');
-
-    const html = await (await app.get('/documentation')).text();
-    const href = /class="doc-link" href="([^"]*)"/.exec(html);
-    assert.ok(href, 'the link block is rendered');
-    assert.equal(
-      href[1],
-      'https://discord.com/channels/1487258655840669807/123456',
-      'the href must be the stored absolute URL',
-    );
-    assert.doesNotMatch(html, /href="\/channels/, 'the URL must not be turned into a relative path');
-  } finally {
-    app.close();
-  }
-});
-
-test('BUG 2: an empty or non-http URL is refused and nothing is stored', async () => {
-  const pool = createFakePool();
-  const app = await startApp({ pool });
-  try {
-    for (const url of ['', 'javascript:alert(1)', 'discord.com/salon']) {
-      const res = await app.post('/documentation/blocs', { block_type: 'link', title: 'Règlement', url });
-      assert.equal(res.status, 302);
-      assert.match(res.headers.get('location'), /erreur=/, `"${url}" must be rejected`);
-    }
-    assert.equal(pool.store.documentationBlocks.length, 0, 'nothing invalid is stored');
-  } finally {
-    app.close();
-  }
-});
-
 test('BUG 3: the decorative hero ring only exists on the dashboard', async () => {
   const pool = createFakePool();
   const app = await startApp({ pool });

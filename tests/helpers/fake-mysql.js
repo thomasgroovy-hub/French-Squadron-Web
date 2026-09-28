@@ -1,11 +1,11 @@
 /**
  * Minimal stateful MySQL double covering exactly the statements issued by
- * `services/forms.js` and `services/documentation.js` (plus the `site_users`
- * lookup used when rendering a candidature).
+ * `services/forms.js` (plus the `site_users` lookup used when rendering a
+ * candidature).
  *
  * It exists so the real HTTP routes can be exercised end to end — a plain
- * recording pool cannot prove that a question is actually persisted or that a
- * documentation link survives the round trip to the database.
+ * recording pool cannot prove that a question is actually persisted. The
+ * documentation page is static and never reaches the database.
  */
 
 const now = () => new Date('2026-03-01T12:00:00Z');
@@ -15,7 +15,6 @@ function emptyStore() {
     forms: [],
     formQuestions: [],
     formResponses: [],
-    documentationBlocks: [],
     siteUsers: [],
     robloxLinks: [],
     strikes: [],
@@ -27,7 +26,7 @@ class FakeMysqlPool {
   constructor({ store = emptyStore(), clock = now } = {}) {
     this.store = store;
     this.clock = clock;
-    this.autoIncrement = { forms: 0, form_questions: 0, form_responses: 0, documentation_blocks: 0 };
+    this.autoIncrement = { forms: 0, form_questions: 0, form_responses: 0 };
     this.log = [];
     this.transactionDepth = 0;
   }
@@ -271,96 +270,6 @@ class FakeMysqlPool {
       if (!row) return [{ affectedRows: 0 }];
       Object.assign(row, { status, reviewer_discord_id: reviewerId, reviewed_at: this.clock() });
       return [{ affectedRows: 1 }];
-    }
-
-    // --------------------------------------------------- documentation_blocks
-    if (/^SELECT id, position, block_type, title, content, url, updated_at FROM documentation_blocks ORDER BY/i.test(sql)) {
-      const rows = this.store.documentationBlocks
-        .slice()
-        .sort((a, b) => a.position - b.position || a.id - b.id)
-        .map((row) => ({ ...row }));
-      return [rows];
-    }
-
-    if (/COALESCE\(MAX\(position\), -1\) \+ 1 AS next_position/i.test(sql)) {
-      const positions = this.store.documentationBlocks.map((b) => b.position);
-      return [[{ next_position: positions.length ? Math.max(...positions) + 1 : 0 }]];
-    }
-
-    if (/^INSERT INTO documentation_blocks/i.test(sql)) {
-      const [position, blockType, title, content, url] = params;
-      const row = {
-        id: this.nextId('documentation_blocks'),
-        position,
-        block_type: blockType,
-        title,
-        content,
-        url,
-        created_at: this.clock(),
-        updated_at: this.clock(),
-      };
-      this.store.documentationBlocks.push(row);
-      return [{ insertId: row.id, affectedRows: 1 }];
-    }
-
-    if (/^SELECT id, position, block_type, title, content, url, updated_at FROM documentation_blocks WHERE id/i.test(sql)) {
-      const row = this.store.documentationBlocks.find((b) => b.id === Number(params[0]));
-      return [row ? [{ ...row }] : []];
-    }
-
-    if (/^UPDATE documentation_blocks SET block_type/i.test(sql)) {
-      const [blockType, title, content, url, blockId] = params;
-      const row = this.store.documentationBlocks.find((b) => b.id === Number(blockId));
-      if (!row) return [{ affectedRows: 0 }];
-      Object.assign(row, { block_type: blockType, title, content, url, updated_at: this.clock() });
-      return [{ affectedRows: 1 }];
-    }
-
-    if (/^UPDATE documentation_blocks SET position = \? WHERE id = \?/i.test(sql)) {
-      const [position, blockId] = params;
-      const row = this.store.documentationBlocks.find((b) => b.id === Number(blockId));
-      if (!row) return [{ affectedRows: 0 }];
-      row.position = position;
-      return [{ affectedRows: 1 }];
-    }
-
-    if (/^UPDATE documentation_blocks SET position = position \+ 1 WHERE position >= \?/i.test(sql)) {
-      const [from] = params;
-      let affected = 0;
-      for (const row of this.store.documentationBlocks) {
-        if (row.position >= Number(from)) {
-          row.position += 1;
-          affected += 1;
-        }
-      }
-      return [{ affectedRows: affected }];
-    }
-
-    if (/^SHOW COLUMNS FROM documentation_blocks/i.test(sql)) {
-      // Mirrors a table created before the 'separator' type existed, so the
-      // widening migration has something to fix.
-      return [[{
-        Field: 'block_type',
-        Type: "enum('heading','text','link','bullets')",
-      }]];
-    }
-
-    if (/^ALTER TABLE documentation_blocks\s+MODIFY COLUMN block_type/i.test(sql)) {
-      return [[]];
-    }
-
-    if (/^DELETE FROM documentation_blocks WHERE id/i.test(sql)) {
-      const index = this.store.documentationBlocks.findIndex((b) => b.id === Number(params[0]));
-      if (index === -1) return [{ affectedRows: 0 }];
-      this.store.documentationBlocks.splice(index, 1);
-      return [{ affectedRows: 1 }];
-    }
-
-    if (/^SELECT id, position FROM documentation_blocks/i.test(sql)) {
-      return [this.store.documentationBlocks
-        .slice()
-        .sort((a, b) => a.position - b.position || a.id - b.id)
-        .map((b) => ({ id: b.id, position: b.position }))];
     }
 
     // ------------------------------------------------- roblox_discord_links

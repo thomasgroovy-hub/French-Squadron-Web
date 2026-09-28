@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderDiscordMarkdown } from '../src/utils/discord-markdown.js';
+import { webConfig } from '../src/config.js';
 
 const viewsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'views');
 const layout = fs.readFileSync(path.join(viewsDir, 'layout.ejs'), 'utf8');
@@ -15,7 +16,7 @@ const base = {
   currentPath: '/candidatures',
   isStaff: false,
   isFormManager: true,
-  webConfig: { documentationEnabled: true },
+  webConfig: { documentationEnabled: true, discordUrl: webConfig.discordUrl },
 };
 
 const form = {
@@ -49,13 +50,11 @@ const pendingResponse = {
   questions: form.questions,
 };
 
-// Mirrors what `describeBlock` in routes/documentation.js hands to the view.
-const blocks = [
-  { id: 1, type: 'heading', typeLabel: 'Titre', tone: 'cyan', icon: 'heading', title: 'Règlement', content: '', url: '', items: [], preview: 'Règlement' },
-  { id: 2, type: 'text', typeLabel: 'Texte', tone: 'cyan', icon: 'text', title: '', content: 'Texte', url: '', items: [], preview: 'Texte' },
-  { id: 3, type: 'link', typeLabel: 'Lien', tone: 'success', icon: 'link', title: 'Discord', content: '', url: 'https://discord.com', items: [], preview: 'Discord' },
-  { id: 4, type: 'bullets', typeLabel: 'Liste à puces', tone: 'success', icon: 'bullets', title: '', content: 'a\nb', url: '', items: ['a', 'b'], preview: 'a · b' },
-  { id: 5, type: 'separator', typeLabel: 'Séparateur', tone: 'neutral', icon: 'separator', title: '', content: '', url: '', items: [], preview: '' },
+// Mirrors what `documentationCards()` in routes/documentation.js hands to the view.
+const docCards = [
+  { key: 'ethics', title: 'Charte éthique', description: 'Texte normatif suprême.', url: 'https://docs.example.test/charte-ethique' },
+  { key: 'facility', title: 'Charte de l’installation', description: 'Ce qui est acceptable dans l’installation.', url: 'https://docs.example.test/charte-installation' },
+  { key: 'discord', title: 'Discord', description: 'Serveur Discord de la Fondation.', url: 'https://discord.gg/test-invitation' },
 ];
 
 /** Renders a view inside the real layout, the way `server.js` does. */
@@ -108,8 +107,10 @@ const pages = {
     response: { ...pendingResponse, status: 'accepted', statusLabel: 'Acceptée', reviewedAt: '2026-01-04', grantedRoleName: null },
     applicantName: 'Bob', applicantUsername: 'bob', applicantAvatarUrl: null, notice: 'Candidature acceptée.', warning: 'MP impossible.',
   }],
-  'documentation (manager)': ['documentation', { currentPath: '/documentation', blocks, isFormManager: true, error: null, notice: 'Bloc ajouté.' }],
-  'documentation (empty, reader)': ['documentation', { currentPath: '/documentation', blocks: [], isFormManager: false, error: null, notice: null }],
+  'documentation': ['documentation', { currentPath: '/documentation', cards: docCards }],
+  'documentation (Discord non configuré)': ['documentation', {
+    currentPath: '/documentation', cards: docCards.map((card) => (card.key === 'discord' ? { ...card, url: '' } : card)),
+  }],
   'dashboard': ['dashboard', { currentPath: '/', isConnected: true, roblox: null }],
   'dashboard (reader)': ['dashboard', { currentPath: '/', isConnected: true, roblox: null, isFormManager: false }],
   'dashboard (roblox linked)': ['dashboard', { currentPath: '/', isConnected: true, roblox: { isLinked: true, data: { username: 'Rob', avatarUrl: null } } }],
@@ -130,11 +131,14 @@ test('every view file compiles', () => {
   }
 });
 
-test('layout exposes Candidatures and Documentation to everyone, Réponses only to the forms role', () => {
+test('layout exposes Candidatures to everyone and Réponses only to the forms role', () => {
   const listData = { forms: [form], ownForms: [], submittedFormIds: new Set(), justSubmitted: false };
   const asReader = renderPage('forms', { ...base, ...listData, isFormManager: false });
   assert.match(asReader, /href="\/candidatures"/);
-  assert.match(asReader, /href="\/documentation"/);
+  // /documentation reste accessible par son URL, mais n'est plus un onglet :
+  // la page est autonome et publique.
+  const nav = asReader.match(/<div class="nav-tabs"[\s\S]*?<\/div>/)?.[0] || '';
+  assert.doesNotMatch(nav, /Documentation/);
   assert.doesNotMatch(asReader, /href="\/reponses"/);
 
   const asManager = renderPage('forms', { ...base, ...listData, isFormManager: true, ownForms: [form] });
@@ -158,225 +162,51 @@ test('form filling renders one input per question, matching its field type', () 
   assert.match(html, /Envoyer ma candidature/);
 });
 
-test('documentation link blocks always carry a safe target', () => {
-  const html = renderPage('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: true, error: null, notice: null });
-  assert.match(html, /href="https:\/\/discord\.com"[^>]*rel="noopener noreferrer"/);
-  assert.match(html, /<h2 class="doc-heading">Règlement<\/h2>/);
-  assert.match(html, /<li>a<\/li>/);
-  assert.match(html, /<li>b<\/li>/);
-});
+test('the documentation page renders its three cards, and nothing else', () => {
+  const html = renderView('documentation', { ...base, currentPath: '/documentation', cards: docCards });
 
-test('a text block is rendered as Discord markdown, not as raw source', () => {
-  const markdown = [{ ...blocks[1], content: '**Gras**, `code`\n- un\n- deux\n\n> cité' }];
-  const data = { ...base, currentPath: '/documentation', blocks: markdown, error: null, notice: null };
+  assert.equal(html.match(/class="card shortcut"/g)?.length, docCards.length);
+  for (const card of docCards) {
+    assert.ok(html.includes(card.title), `la carte « ${card.title} » a son titre`);
+    assert.ok(html.includes(card.description), `la carte « ${card.title} » est décrite`);
 
-  const html = renderView('documentation', { ...data, isFormManager: true });
-  assert.match(html, /<strong>Gras<\/strong>/);
-  assert.match(html, /<code class="doc-inline-code">code<\/code>/);
-  assert.match(html, /<ul class="doc-md-list"><li>un<\/li><li>deux<\/li><\/ul>/);
-  assert.match(html, /<blockquote class="doc-quote">cité<\/blockquote>/);
-
-  // Chez un lecteur il n'y a ni éditeur ni textarea : la seule trace des
-  // marqueurs serait une chaîne mal rendue, donc ils doivent avoir disparu.
-  const asReader = renderView('documentation', { ...data, isFormManager: false });
-  assert.doesNotMatch(asReader, /\*\*Gras\*\*/);
-  assert.doesNotMatch(asReader, /`code`/);
-  assert.doesNotMatch(asReader, /^- un$/m);
-  assert.match(asReader, /<strong>Gras<\/strong>/);
-});
-
-test('every block renders with the published markup, and the separator as a rule', () => {
-  const html = renderView('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: true, error: null, notice: null });
-
-  // Une ligne par bloc, dans l'ordre de publication.
-  assert.deepEqual(
-    [...html.matchAll(/data-block-id="(\d+)"/g)].map((match) => Number(match[1])),
-    blocks.map((block) => block.id),
-  );
-
-  assert.match(html, /<h2 class="doc-heading">Règlement<\/h2>/);
-  assert.match(html, /<p class="doc-text">Texte<\/p>/);
-  assert.match(html, /<a class="doc-link" href="https:\/\/discord\.com"[^>]*>Discord<\/a>/);
-  assert.match(html, /<ul class="doc-bullets">[\s\S]*<li>a<\/li>[\s\S]*<li>b<\/li>[\s\S]*<\/ul>/);
-  assert.match(html, /<hr class="doc-separator">/);
-  // Le rendu n'est plus entouré d'un cadre de carte.
-  assert.doesNotMatch(html, /class="doc-block-card/);
-  assert.equal(html.match(/<section class="card"/g)?.length, 1, 'seul l’en-tête garde son conteneur de page');
-  assert.doesNotMatch(html, /<details|doc-new-card|Ajouter un bloc/);
-  assert.doesNotMatch(html, /class="doc-preview"/);
-});
-
-test('a block whose fields carry HTML is escaped, not rendered as markup', () => {
-  // Le serveur ne fait que normaliser ces champs : le rendu doit les échapper.
-  const hostile = [
-    { ...blocks[0], title: '<img src=x onerror=alert(1)>' },
-    { ...blocks[2], title: '</a><script>alert(1)</script>', url: 'https://ok.example/?a=1&b=2' },
-    { ...blocks[3], items: ['<b>gras</b>', '"><svg onload=alert(1)>'] },
-  ];
-  const asReader = renderView('documentation', { ...base, currentPath: '/documentation', blocks: hostile, isFormManager: false, error: null, notice: null });
-
-  assert.doesNotMatch(asReader, /<img src=x/);
-  assert.doesNotMatch(asReader, /<script>/);
-  assert.doesNotMatch(asReader, /<svg onload/);
-  assert.match(asReader, /&lt;img src=x onerror=alert\(1\)&gt;/);
-  assert.match(asReader, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-  assert.match(asReader, /&lt;b&gt;gras&lt;\/b&gt;/);
-  // L'URL reste un lien valide, avec son & échappé une seule fois.
-  assert.match(asReader, /href="https:\/\/ok\.example\/\?a=1&amp;b=2"/);
-  assert.doesNotMatch(asReader, /&amp;amp;/);
-
-  // Le markdown, lui, reste rendered : c'est le seul HTML autorisé ici.
-  const markdown = renderView('documentation', { ...base, currentPath: '/documentation', blocks: [{ ...blocks[1], content: '<script>alert(1)</script>' }], isFormManager: false, error: null, notice: null });
-  assert.doesNotMatch(markdown, /<script>/);
-  assert.match(markdown, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-});
-
-test('the editor chrome is hidden until the row is hovered or focused', () => {
-  const doc = { ...base, currentPath: '/documentation', blocks, isFormManager: true, error: null, notice: null };
-  const css = renderPage('documentation', doc);
-
-  // Les actions et la poignée commencent invisibles, et se révèlent au survol
-  // comme au focus clavier, pour rester accessibles sans souris.
-  assert.match(css, /\.doc-row-actions \{[^}]*opacity: 0;/);
-  assert.match(css, /\.doc-row:hover \.doc-row-actions, \.doc-row:focus-within \.doc-row-actions \{ opacity: 1; \}/);
-  assert.match(css, /\.doc-insert-btn \{[^}]*opacity: 0;/);
-  assert.match(css, /\.doc-insert:hover \.doc-insert-btn/);
-});
-
-test('each block is edited in place, with the markdown toolbar and the shortcuts', () => {
-  const html = renderView('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: true, error: null, notice: null });
-
-  for (const block of blocks) {
-    assert.match(html, new RegExp(`<form class="doc-edit" action="/documentation/blocs/${block.id}"`), `le bloc ${block.id} a son formulaire`);
-    assert.match(html, new RegExp(`id="doc-title-${block.id}"[^>]*value="${block.title}"`));
-    assert.match(html, new RegExp(`id="doc-content-${block.id}"[^>]*>[\\s\\S]*?</textarea>`));
-    assert.match(html, new RegExp(`id="doc-url-${block.id}"[^>]*value="${block.url}"`));
+    // Chaque lien part dans un nouvel onglet, sans jamais donner la main à
+    // la page ouverte.
+    assert.ok(
+      html.includes(`href="${card.url}" target="_blank" rel="noopener noreferrer"`),
+      `la carte « ${card.title} » ouvre son URL`,
+    );
   }
-  assert.equal(html.match(/<form class="doc-edit"/g)?.length, blocks.length);
-  // La zone d'édition est masquée tant qu'on ne demande pas à modifier.
-  assert.equal(html.match(/class="doc-edit"[^>]*hidden/g)?.length, blocks.length);
-  assert.match(html, /<div class="doc-row-body" data-doc-body>/);
-
-  // La barre d'outils entoure la sélection avec les bons délimiteurs.
-  for (const [key, open] of [['bold', '**'], ['italic', '*'], ['underline', '__'], ['strike', '~~']]) {
-    assert.match(html, new RegExp(`data-md="${key}" data-open="${open.replace(/\*/g, '\\*')}" data-close="${open.replace(/\*/g, '\\*')}"`));
-  }
-  assert.match(html, /selectionStart/);
-  assert.match(html, /setSelectionRange/);
-  // execCommand est obsolète : il ne doit pas être utilisé.
-  assert.doesNotMatch(html, /execCommand/);
-  // Ctrl+Entrée enregistre, Échap annule.
-  assert.match(html, /event\.key === 'Enter' && \(event\.ctrlKey \|\| event\.metaKey\)/);
-  assert.match(html, /event\.key === 'Escape'/);
-  assert.match(html, /data-action="cancel"/);
+  // Ni contenu stocké, ni chrome d'éditeur : la page est une simple table de liens.
+  assert.doesNotMatch(html, /<form|<textarea|<select|documentation\/blocs|data-block-id/);
+  assert.doesNotMatch(html, /<script/);
 });
 
-test('an insertion point sits between the blocks, and posts the slot it was clicked at', () => {
-  const html = renderView('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: true, error: null, notice: null });
+test('a card without a configured URL stops being a link', () => {
+  const cards = docCards.map((card) => (card.key === 'discord' ? { ...card, url: '' } : card));
+  const html = renderView('documentation', { ...base, currentPath: '/documentation', cards });
 
-  // Un point par frontière : entre les blocs, puis après le dernier (sans
-  // doublon tout en bas).
-  assert.equal(html.match(/data-insert(?=[ >])/g)?.length, blocks.length);
-  // `at` est le nombre de blocs au-dessus du point : 1, 2, 3… jusqu'à la fin.
-  assert.deepEqual(
-    [...html.matchAll(/name="at" value="(\d+)"/g)].map((match) => Number(match[1])),
-    [1, 2, 3, 4, 5],
-  );
-  assert.equal(html.match(/class="doc-insert-btn"/g)?.length, blocks.length);
-  assert.equal(html.match(/action="\/documentation\/blocs" method="post" class="doc-insert-form"/g)?.length, blocks.length);
+  assert.match(html, /<a class="card shortcut" aria-disabled="true">[\s\S]*?Discord/);
+  assert.doesNotMatch(html, /<a class="card shortcut"[^>]*href="#"[^>]*aria-disabled/);
+  // Les deux cartes configurées restent, elles, cliquables.
+  assert.equal(html.match(/target="_blank"/g)?.length, 2);
 });
 
-test('the insertion picker offers the five block types as compact choices', () => {
-  const html = renderView('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: true, error: null, notice: null });
+test('the footer links out to Discord and Roblox, from the server configuration', () => {
+  const html = renderPage('documentation', { ...base, currentPath: '/documentation', cards: docCards });
 
-  for (const label of ['Titre', 'Texte', 'Lien', 'Liste', 'Séparateur']) {
-    assert.match(html, new RegExp(`aria-label="${label}"`), `l'icône ${label} existe et est accessible`);
-  }
-  // Le type se choisit à l'insertion, et se corrige dans l'éditeur : les deux
-  // kinds de formulaire sont pilotés de la même façon, cinq choix chacun.
-  // Cinq formulaires d'édition, plus un par frontière entre blocs/après le dernier.
-  const editForms = blocks.length;
-  const insertForms = blocks.length;
-  assert.equal(html.match(/<form[^>]*data-typed-form/g)?.length, editForms + insertForms);
-  assert.equal(html.match(/<button type="button" data-type=/g)?.length, (editForms + insertForms) * 5);
-  // Clicking + reveals only the compact type choices. The details and submit
-  // button remain hidden until the user chooses one of the five types.
-  assert.equal(html.match(/class="doc-insert-fields" data-insert-details hidden/g)?.length, insertForms);
-  assert.match(html, /var firstChoice = form\.querySelector\('\[data-type-picker\] button'\)/);
-
-  // Chaque formulaire garde son <select name="block_type">, seule source de vérité
-  // sans JavaScript : ceux d'édition sont pré-positionnés sur le type du bloc.
-  assert.equal(html.match(/<select[^>]*name="block_type"/g)?.length, editForms + insertForms);
-  for (const block of blocks) {
-    const form = html.match(new RegExp(`<form class="doc-edit" action="/documentation/blocs/${block.id}"[\\s\\S]*?</form>`))?.[0] || '';
-    assert.match(form, new RegExp(`<option value="${block.type}" selected>`), `le bloc ${block.id} reste de type ${block.type}`);
-    assert.match(form, new RegExp(`<button type="button" data-type="${block.type}" aria-label="[^"]+" aria-pressed="true"`), `le bloc ${block.id} a son type coché`);
-  }
-  // Un séparateur n'a rien à remplir : il part dès qu'on le choisit.
-  assert.match(html, /if \(!fields\.length\) \{\s*form\.submit\(\);/);
-});
-
-test('drag and drop stays the only reordering method when JavaScript is on', () => {
-  const html = renderView('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: true, error: null, notice: null });
-
-  assert.match(html, /action="\/documentation\/blocs\/reordonner"/);
-  assert.match(html, /id="doc-reorder-form"/);
-  assert.match(html, /input\.name = 'block_id'/);
-  assert.match(html, /reorderForm\.submit\(\)/);
-  assert.equal(html.match(/reorderForm\.submit\(\)/g)?.length, 1);
-  assert.match(html, /dragstart/);
-
-  // Les boutons ▲▼ ne survivent que dans le repli sans JavaScript, donc jamais
-  // dans le DOM quand le script est actif.
-  const noscript = html.match(/<noscript>[\s\S]*?<\/noscript>/)?.[0] || '';
-  assert.match(noscript, /\/documentation\/blocs\/1\/deplacer/);
-  assert.equal((noscript.match(/\/deplacer/g) || []).length, blocks.length * 2);
-  const outsideNoscript = html.replace(/<noscript>[\s\S]*?<\/noscript>/, '');
-  assert.doesNotMatch(outsideNoscript, /deplacer/);
-});
-
-test('an empty documentation invites the manager to insert the first block', () => {
-  const html = renderView('documentation', { ...base, currentPath: '/documentation', blocks: [], isFormManager: true, error: null, notice: null });
-
-  assert.match(html, /La documentation est vide/);
-  // Le point d'insertion reste disponible : il est le seul point de départ.
-  assert.equal(html.match(/data-insert(?=[ >])/g)?.length, 1);
-  assert.match(html, /name="at" value="0"/);
-  assert.equal(html.match(/class="empty-state"/g)?.length, 1);
-});
-
-test('a reader without the forms role gets no editing affordance at all', () => {
-  const asReader = renderView('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: false, error: null, notice: null });
-
-  assert.doesNotMatch(asReader, /class="doc-edit"/);
-  assert.doesNotMatch(asReader, /data-insert/);
-  assert.doesNotMatch(asReader, /doc-reorder-form/);
-  assert.doesNotMatch(asReader, /data-confirm="Supprimer ce bloc/);
-  assert.doesNotMatch(asReader, /deplacer|supprimer|reordonner/);
-  assert.doesNotMatch(asReader, /draggable="true"/);
-  assert.doesNotMatch(asReader, /doc-md-toolbar/);
-  assert.doesNotMatch(asReader, /<script>/);
-  // Le contenu publié, lui, reste complet.
-  assert.match(asReader, /<h2 class="doc-heading">Règlement<\/h2>/);
-  assert.match(asReader, /<li>a<\/li>/);
-  assert.match(asReader, /<hr class="doc-separator">/);
-
-  // Une page vide reste lisible, sans point d'insertion.
-  const emptyReader = renderView('documentation', { ...base, currentPath: '/documentation', blocks: [], isFormManager: false, error: null, notice: null });
-  assert.doesNotMatch(emptyReader, /data-insert/);
-  assert.match(emptyReader, /Aucun contenu n/);
-});
-
-test('the footer links out to Discord and Roblox', () => {
-  const html = renderPage('documentation', { ...base, currentPath: '/documentation', blocks, isFormManager: false, error: null, notice: null });
-
-  assert.match(html, /<a href="https:\/\/discord\.gg\/svdpdNdnAB" target="_blank" rel="noopener noreferrer">Discord<\/a>/);
+  // Une seule source d'URL Discord : celle de la configuration, pas une adresse
+  // écrite en dur dans la vue.
+  assert.match(layout, /<a href="<%= webConfig\?\.discordUrl \|\| '#' %>" target="_blank" rel="noopener noreferrer">Discord<\/a>/);
+  assert.ok(html.includes(`<a href="${webConfig.discordUrl}" target="_blank" rel="noopener noreferrer">Discord</a>`));
   // Le lien Roblox est un placeholder : le TODO doit survivre dans la vue.
   // Un commentaire EJS disparaît au rendu, on le cherche donc dans le source.
   assert.match(layout, /<%# TODO: remplacer par l'URL du groupe Roblox %>/);
   assert.match(html, /<a href="#" target="_blank" rel="noopener noreferrer">Roblox<\/a>/);
-  // Les deux liens suivent les liens légaux, pas avant.
-  assert.ok(html.indexOf('/privacy') < html.indexOf('discord.gg/svdpdNdnAB'));
+  // Les deux liens suivent les liens légaux, pas avant. La carte Discord partage
+  // la même URL : c'est sa dernière occurrence, celle du footer, qu'on compare.
+  assert.ok(html.indexOf('/privacy') < html.lastIndexOf(`href="${webConfig.discordUrl}" target="_blank"`));
+
 });
 
 test('the dashboard greeting carries the name for the client-side script', () => {

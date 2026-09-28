@@ -133,14 +133,14 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
     res.render('privacy', { title: 'Politique de Confidentialité' });
   });
 
-  // « Candidatures » is open to any connected member; « Réponses » and the
-  // documentation manager require the forms role.
+  // « Candidatures » is open to any connected member; « Réponses » requires the
+  // forms role. The documentation page is public and needs no pool.
   router.use('/candidatures', createFormsRouter({ pool, fetchFn }));
   router.use('/reponses', createResponsesRouter({ pool, fetchFn }));
   if (webConfig.documentationEnabled) {
-    router.use('/documentation', createDocumentationRouter({ pool }));
+    router.use('/documentation', createDocumentationRouter());
   } else {
-    router.get('/documentation', requireAuth, (req, res) => {
+    router.get('/documentation', (req, res) => {
       res.status(503).render('error', {
         title: 'Documentation indisponible',
         message: 'Le module de documentation est temporairement désactivé. Merci de votre patience.',

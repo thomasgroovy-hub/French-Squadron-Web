@@ -58,6 +58,9 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
             currentPath: req.originalUrl.split('?')[0],
             webConfig: {
               documentationEnabled: config.documentationEnabled,
+              // Le footer sort vers Discord : l'URL vient de la configuration
+              // serveur, jamais d'un lien écrit en dur dans la vue.
+              discordUrl: config.discordUrl,
             },
           },
           callback
