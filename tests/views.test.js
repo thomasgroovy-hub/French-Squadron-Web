@@ -16,7 +16,7 @@ const base = {
   currentPath: '/candidatures',
   isStaff: false,
   isFormManager: true,
-  webConfig: { documentationEnabled: true, discordUrl: webConfig.discordUrl },
+  webConfig: { discordUrl: webConfig.discordUrl },
 };
 
 const form = {

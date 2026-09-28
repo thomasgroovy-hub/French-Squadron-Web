@@ -64,7 +64,7 @@ test('la page /documentation répond sans connexion et rend ses trois cartes', a
     assert.match(main, /Charte éthique/);
     assert.match(main, /Charte de l’installation/);
     assert.match(main, /texte normatif suprême de la Fondation de Procédures de Confinement Spéciales/);
-    assert.match(main, /Utilisée par le département administratif/);
+    assert.match(main, /Utiliser par le département administratif/);
     assert.match(main, /serveur Discord de la Fondation et de l’installation/);
   } finally {
     close();

@@ -20,7 +20,7 @@ function documentationCards() {
     {
       key: 'facility',
       title: 'Charte de l’installation',
-      description: 'La charte de l’installation rédige ce qui est acceptable dans l’installation. Utilisée par le département administratif.',
+      description: 'La charte de l’installation rédige ce qui est acceptable dans l’installation. Utiliser par le département administratif',
       url: webConfig.documentationFacilityUrl,
     },
     {

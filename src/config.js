@@ -35,8 +35,6 @@ export const webConfig = {
   formsRoleId: process.env.WEB_FORMS_ROLE_ID || '1532037579816570981',
   // Rôle pour la gestion des membres (onglet Supervision) - Permadeath, sanctions, etc.
   memberManagementRoleId: process.env.WEB_MEMBER_MANAGEMENT_ROLE_ID || '1487266203864006707',
-  // Feature flag: si false, la page /documentation est inaccessible.
-  documentationEnabled: process.env.WEB_DOCUMENTATION_ENABLED !== 'false',
   // Liens publics de la page /documentation et du footer, configurables sur
   // Railway. Repli sur « / » pour la documentation : une carte qui renvoie au
   // site vaut mieux qu'une URL cassée.

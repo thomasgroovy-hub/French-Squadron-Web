@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { requireAuth } from '../auth/session.js';
 import { webConfig } from '../config.js';
-import { webConfig as webConfigImport } from '../config.js';
 import {
   fetchGuildMemberDirectory,
   fetchGuildMemberRoles,
@@ -134,19 +133,13 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
   });
 
   // « Candidatures » is open to any connected member; « Réponses » requires the
-  // forms role. The documentation page is public and needs no pool.
+  // forms role. /documentation is public and static: no pool, no guard, no
+  // feature flag. It used to sit behind WEB_DOCUMENTATION_ENABLED, which
+  // replaced the whole page with a 503 "module désactivé" page — that flag
+  // existed for the old MySQL-backed editor, which no longer exists.
   router.use('/candidatures', createFormsRouter({ pool, fetchFn }));
   router.use('/reponses', createResponsesRouter({ pool, fetchFn }));
-  if (webConfig.documentationEnabled) {
-    router.use('/documentation', createDocumentationRouter());
-  } else {
-    router.get('/documentation', (req, res) => {
-      res.status(503).render('error', {
-        title: 'Documentation indisponible',
-        message: 'Le module de documentation est temporairement désactivé. Merci de votre patience.',
-      });
-    });
-  }
+  router.use('/documentation', createDocumentationRouter());
 
   // A member file is reachable by the supervision role and by the comit�
   // d'�thique, which needs it to manage strikes. The tab itself is rendered
