@@ -9,7 +9,7 @@ import { createMainRouter } from './routes/index.js';
 import { createPermadeathRouter } from './routes/permadeath.js';
 
 import { getDatabasePool, getSiteDatabasePool, findMissingEnv } from './database.js';
-import { renderDiscordMarkdown } from './utils/discord-markdown.js';
+import { renderDiscordInline, renderDiscordMarkdown, stripDiscordMarkdown } from './utils/discord-markdown.js';
 import { printVersionBanner } from './version.js';
 
 const SITE_DATABASE_VARS = ['SITE_MYSQL_HOST', 'SITE_MYSQL_USER', 'SITE_MYSQL_PASSWORD', 'SITE_MYSQL_DATABASE'];
@@ -35,6 +35,12 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
   // Markdown helper, shared by every view. The function escapes the text it is
   // given, so views must print its result unescaped.
   app.locals.renderDiscordMarkdown = renderDiscordMarkdown;
+  // Same syntax without block structure, for text dropped inside an existing
+  // element: a question label, a page title, a card subtitle.
+  app.locals.renderDiscordInline = renderDiscordInline;
+  // Plain text, for the attributes that cannot hold markup (`aria-label`,
+  // `title`, `placeholder`).
+  app.locals.stripDiscordMarkdown = stripDiscordMarkdown;
 
   // Middleware pour envelopper automatiquement les vues dans layout.ejs
   app.use((req, res, next) => {

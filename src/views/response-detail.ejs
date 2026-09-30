@@ -10,7 +10,7 @@
       </span>
     <% } %>
     <div>
-      <p class="eyebrow" style="margin: 0;">Candidature · <a href="/candidatures/<%= response.formId %>"><%= response.formTitle %></a></p>
+      <p class="eyebrow" style="margin: 0;">Candidature · <a href="/candidatures/<%= response.formId %>"><%- renderDiscordInline(response.formTitle) %></a></p>
       <h1 style="font-size: 1.6rem; margin: 0.25rem 0;"><%= applicantName || applicantUsername || response.applicantDiscordId %></h1>
       <p class="muted" style="margin: 0;">
         <%= applicantUsername || response.applicantDiscordId %>
@@ -52,8 +52,8 @@
         <div class="answer-label">
           <span class="question-index"><%= index + 1 %></span>
           <div>
-            <div class="question-label" style="margin: 0;"><%= question.label %></div>
-            <% if (question.helpText) { %><p class="question-help" style="margin: 0;"><%= question.helpText %></p><% } %>
+            <div class="question-label" style="margin: 0;"><%- renderDiscordInline(question.label) %></div>
+            <% if (question.helpText) { %><p class="question-help" style="margin: 0;"><%- renderDiscordInline(question.helpText) %></p><% } %>
           </div>
         </div>
         <%# Un choix multiple est stocké comme un tableau : l'afficher en liste
@@ -67,7 +67,15 @@
             <p class="muted">Aucune réponse.</p>
           <% } %>
         <% } else if (value) { %>
-          <p class="answer-value"><%= value %></p>
+          <%# Le markdown n'est rendu que pour les champs de texte libre. Une
+              option de liste ou une date s'affichent ici exactement comme le
+              candidat les a vues : les réinterpréter reviendrait à afficher autre
+              chose que ce qui a été proposé. %>
+          <% if (question.fieldType === 'long' || question.fieldType === 'short') { %>
+            <p class="answer-value"><%- renderDiscordInline(value) %></p>
+          <% } else { %>
+            <p class="answer-value"><%= value %></p>
+          <% } %>
         <% } else { %>
           <p class="muted">Aucune réponse.</p>
         <% } %>

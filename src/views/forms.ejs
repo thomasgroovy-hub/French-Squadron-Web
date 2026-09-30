@@ -33,7 +33,7 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3.8h7l4 4V20H7z"/><path d="M14 4v4h4M10 13h5M10 16h5"/></svg>
             </span>
             <div class="row-body">
-              <div class="row-title"><%= form.title %></div>
+              <div class="row-title"><%- renderDiscordInline(form.title) %></div>
               <div class="row-subtitle">
                 <%= form.responseCount %> candidature<%= form.responseCount > 1 ? 's' : '' %>
                 <% if (form.pendingCount) { %>· <%= form.pendingCount %> en attente<% } %>
@@ -65,14 +65,14 @@
           <span class="row-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3.8h7l4 4V20H7z"/><path d="M14 4v4h4M10 13h5M10 16h5"/></svg>
           </span>
-          <div class="row-body">
-            <div class="row-title"><%= form.title %></div>
-            <% if (form.description) { %>
-              <div class="row-subtitle"><%= form.description %></div>
-            <% } %>
-          </div>
-          <div class="row-aside">
-            <% if (acceptedForms.has(form.id)) { %>
+            <div class="row-body">
+              <div class="row-title"><%- renderDiscordInline(form.title) %></div>
+              <% if (form.description) { %>
+                <div class="row-subtitle"><%- renderDiscordInline(form.description) %></div>
+              <% } %>
+            </div>
+            <div class="row-aside">
+              <% if (acceptedForms.has(form.id)) { %>
               <span class="badge badge-success">Acceptée</span>
               <span class="btn btn-outline btn-sm" aria-disabled="true" style="opacity: 0.5; pointer-events: none;">Postulé</span>
             <% } else { %>

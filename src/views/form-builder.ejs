@@ -72,15 +72,24 @@
       <h2>Informations</h2>
     </div>
 
+    <%# Le markdown est annoncé une seule fois, ici, plutôt que sur chaque champ :
+        c'est le même comportement partout, la liste des champs qui l'acceptent
+        se lit dans la page. %>
+    <p class="question-help" style="margin: 0 0 1rem;">
+      Mise en forme : surlignez un texte dans le titre, la description, un titre de page, un intitulé ou une aide — une barre apparaît alors, comme sur Discord.
+      Syntaxe : <code>**gras**</code>, <code>*italique*</code>, <code>__souligné__</code>, <code>~~barré~~</code>, <code>||spoiler||</code>, <code>&gt; citation</code>, <code>`code`</code>, <code>[lien](https://…)</code>.
+      Les réponses des candidats sont rendues de la même façon.
+    </p>
+
     <div class="field-block">
       <label class="field-label" for="form-title">Titre</label>
-      <input class="field-input" id="form-title" type="text" name="title" value="<%= form.title %>" maxlength="120" placeholder="Recrutement de pilote" required>
+      <input class="field-input" id="form-title" type="text" name="title" value="<%= form.title %>" maxlength="120" placeholder="Recrutement de pilote" required data-md-field>
     </div>
 
     <div class="field-block">
       <label class="field-label" for="form-description">Description globale</label>
       <p class="question-help">Affichée en haut du formulaire, avant les questions.</p>
-      <textarea class="field-input" id="form-description" name="description" rows="4" maxlength="2000" placeholder="Présentez le poste et ce que vous attendez des candidats."><%= form.description %></textarea>
+      <textarea class="field-input" id="form-description" name="description" rows="4" maxlength="2000" placeholder="Présentez le poste et ce que vous attendez des candidats." data-md-field><%= form.description %></textarea>
     </div>
 
     <div class="field-block">
@@ -171,7 +180,7 @@
 
           <div class="field-block">
             <label class="field-label" for="page-title-<%= pageIndex %>">Titre de la page</label>
-            <input class="field-input" id="page-title-<%= pageIndex %>" type="text" name="page_title[<%= pageIndex %>]" value="<%= page.title || '' %>" maxlength="120" placeholder="Laissez vide pour ne pas afficher de titre">
+            <input class="field-input" id="page-title-<%= pageIndex %>" type="text" name="page_title[<%= pageIndex %>]" value="<%= page.title || '' %>" maxlength="120" placeholder="Laissez vide pour ne pas afficher de titre" data-md-field>
           </div>
 
           <div class="stack" data-page-questions>
@@ -200,10 +209,10 @@
                   <input type="hidden" name="question_id[]" value="<%= question.id || '' %>">
                   <input type="hidden" name="question_page[]" value="<%= page.position %>">
                   <label class="field-label" for="q-label-<%= question.id || 'new' + index %>">Intitulé</label>
-                  <input class="field-input" id="q-label-<%= question.id || 'new' + index %>" type="text" name="question_label[]" value="<%= question.label %>" maxlength="200" placeholder="Pourquoi souhaitez-vous rejoindre l’équipe ?">
+                  <input class="field-input" id="q-label-<%= question.id || 'new' + index %>" type="text" name="question_label[]" value="<%= question.label %>" maxlength="200" placeholder="Pourquoi souhaitez-vous rejoindre l’équipe ?" data-md-field>
 
                   <label class="field-label" for="q-help-<%= question.id || 'new' + index %>">Description / aide</label>
-                  <input class="field-input" id="q-help-<%= question.id || 'new' + index %>" type="text" name="question_help[]" value="<%= question.helpText %>" maxlength="500" placeholder="Précisez ce que vous attendez comme réponse.">
+                  <input class="field-input" id="q-help-<%= question.id || 'new' + index %>" type="text" name="question_help[]" value="<%= question.helpText %>" maxlength="500" placeholder="Précisez ce que vous attendez comme réponse." data-md-field>
 
                   <label class="field-label" for="q-image-<%= question.id || 'new' + index %>">Image (facultatif)</label>
                   <p class="question-help" style="margin: 0.2rem 0 0.3rem;">Collez l’adresse d’une image (http ou https). Elle s’affichera au-dessus du champ de réponse, côté candidat.</p>

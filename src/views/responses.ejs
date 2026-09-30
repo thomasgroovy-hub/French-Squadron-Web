@@ -26,7 +26,7 @@
         <span class="row-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3.8h7l4 4V20H7z"/><path d="M14 4v4h4"/></svg>
         </span>
-        <h2><a href="/candidatures/<%= form.id %>" style="color: inherit;"><%= form.title %></a></h2>
+        <h2><a href="/candidatures/<%= form.id %>" style="color: inherit;"><%- renderDiscordInline(form.title) %></a></h2>
         <span class="row-aside">
           <span class="badge badge-<%= form.status === 'open' ? 'success' : (form.status === 'closed' ? 'danger' : 'warning') %>"><%= form.statusLabel %></span>
         </span>

@@ -12,10 +12,14 @@
 
 <section class="card" style="margin-top: 1rem;">
   <p class="eyebrow"><%= previewMode ? 'Aperçu du formulaire' : 'Formulaire' %></p>
-  <h1 style="font-size: 1.8rem; margin: 0.35rem 0;"><%= form.title %></h1>
+  <h1 style="font-size: 1.8rem; margin: 0.35rem 0;"><%- renderDiscordInline(form.title) %></h1>
   <% if (form.description) { %>
-    <p class="muted" style="margin-top: 0.5rem;"><%= form.description %></p>
+    <p class="muted" style="margin-top: 0.5rem;"><%- renderDiscordInline(form.description) %></p>
   <% } %>
+  <%# Une seule ligne, pas une par question : la barre de mise en forme
+      apparaît de toute façon à la sélection, elle ne fait que nommer ce qui est
+      possible. %>
+  <p class="question-help" style="margin: 0.6rem 0 0;">Vos réponses acceptent le markdown Discord : sélectionnez un texte pour le mettre en forme (gras, italique, spoiler…).</p>
 </section>
 
 <%# Repli : un appelant qui n'a pas découpé le formulaire en pages est traité
@@ -74,11 +78,11 @@
         si elle est réinitialisée à chaque page : c'est l'ordre de lecture. %>
     <% let questionNumber = 0; %>
     <% pages.forEach((page, pageIndex) => { %>
-      <section class="form-page" data-form-page="<%= pageIndex %>" aria-label="<%= page.title ? page.title : 'Page ' + (pageIndex + 1) %>">
+      <section class="form-page" data-form-page="<%= pageIndex %>" aria-label="<%= page.title ? stripDiscordMarkdown(page.title) : 'Page ' + (pageIndex + 1) %>">
         <% if (page.title || multiPage) { %>
           <div class="page-head">
             <% if (page.title) { %>
-              <h2 class="page-title"><%= page.title %></h2>
+              <h2 class="page-title"><%- renderDiscordInline(page.title) %></h2>
             <% } %>
             <% if (multiPage) { %>
               <p class="page-counter">Page <%= pageIndex + 1 %> sur <%= pages.length %></p>
@@ -102,9 +106,9 @@
               <div class="question-head">
                 <span class="question-index"><%= questionNumber %></span>
                 <div>
-                  <h2 class="question-label"><%= question.label %></h2>
+                  <h2 class="question-label"><%- renderDiscordInline(question.label) %></h2>
                   <% if (question.helpText) { %>
-                    <p class="question-help"><%= question.helpText %></p>
+                    <p class="question-help"><%- renderDiscordInline(question.helpText) %></p>
                   <% } %>
                 </div>
               </div>
@@ -114,7 +118,10 @@
                 <img class="question-image" src="<%= question.imageUrl %>" alt="" loading="lazy">
               <% } %>
               <% if (question.fieldType === 'long') { %>
-                <textarea class="field-input" name="answer_<%= question.id %>" rows="6" placeholder="Votre réponse"><%= value %></textarea>
+                <%# Seuls les champs de texte libre portent `data-md-field` : une
+                    date ou une option de liste ne peut pas afficher de mise en
+                    forme, et un markdown y resterait visible tel quel. %>
+                <textarea class="field-input" name="answer_<%= question.id %>" data-md-field rows="6" placeholder="Votre réponse"><%= value %></textarea>
               <% } else if (question.fieldType === 'date') { %>
                 <input class="field-input" type="date" name="answer_<%= question.id %>" value="<%= value %>">
               <% } else if (question.fieldType === 'choice_single') { %>
@@ -136,7 +143,7 @@
                   <% }); %>
                 </ul>
               <% } else { %>
-                <input class="field-input" type="text" name="answer_<%= question.id %>" value="<%= value %>" placeholder="Votre réponse" maxlength="4000">
+                <input class="field-input" type="text" name="answer_<%= question.id %>" data-md-field value="<%= value %>" placeholder="Votre réponse" maxlength="4000">
               <% } %>
             </article>
           <% }); %>
