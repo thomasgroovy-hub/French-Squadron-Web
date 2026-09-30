@@ -29,6 +29,8 @@
       --bg-elevated: #ffffff;
       --border: #e5e7eb;
       --border-strong: #d1d5db;
+      --field-bg: #ffffff;
+      --field-border: #8A94A3;
       --text-main: #111827;
       --text-muted: #6b7280;
       --accent: #475569;
@@ -64,6 +66,11 @@
       --bg-elevated: #27272A;
       --border: #27272A;
       --border-strong: #3F3F46;
+      /* Les champs ont leur propre surface : sur une ligne de formulaire, le fond
+         vaut `--bg-elevated`, donc un champ de la même couleur se fondait dans son
+         conteneur et sa bordure était invisible (les deux valent #27272A). */
+      --field-bg: #101012;
+      --field-border: #71717C;
       --text-main: #F4F4F5;
       --text-muted: #A1A1AA;
       --accent: #8A8A93;
@@ -104,6 +111,8 @@
       --bg-elevated: #3d1d26;
       --border: #5c2f3d;
       --border-strong: #7a3f52;
+      --field-bg: #2a141c;
+      --field-border: #A05C76;
       --text-main: #ffeef4;
       --text-muted: #d9a7b9;
       --accent: #ff9ebb;
@@ -348,7 +357,7 @@
     .profile-avatar { width: 64px; height: 64px; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--border); }
     .data-label { display: block; color: var(--text-muted); font-size: 0.78rem; }
     .member-tools { display: flex; gap: 0.65rem; margin-bottom: 1rem; }
-    .member-tools input { flex: 1; min-width: 0; padding: 0.65rem 0.8rem; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-main); background: var(--bg-elevated); font: inherit; }
+    .member-tools input { flex: 1; min-width: 0; padding: 0.65rem 0.8rem; border: 1px solid var(--field-border); border-radius: var(--radius-sm); color: var(--text-main); background: var(--field-bg); font: inherit; }
     .member-list { display: grid; gap: 0.65rem; }
     .member-row { display: grid; grid-template-columns: minmax(180px, 1.1fr) minmax(130px, 0.8fr) minmax(150px, 1.2fr) auto; align-items: center; gap: 1rem; padding: 0.8rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-main); transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease; }
     .member-identity { display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
@@ -402,9 +411,15 @@
     .field-block { display: grid; gap: 0.35rem; margin-bottom: 1.1rem; }
     .field-block:last-child { margin-bottom: 0; }
     .field-label { font-size: 0.82rem; font-weight: 600; color: var(--text-main); }
-    .field-input { width: 100%; padding: 0.65rem 0.8rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-main); font: inherit; font-size: 0.9rem; resize: vertical; }
-    .field-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+    .field-input { width: 100%; padding: 0.65rem 0.8rem; border: 1px solid var(--field-border); border-radius: var(--radius-sm); background: var(--field-bg); color: var(--text-main); font: inherit; font-size: 0.9rem; resize: vertical; }
+    /* La bordure reste en place au focus : l'anneau se pose dessus, mais le champ
+       garde son contour et ne se transforme pas en simple tache. */
+    .field-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
     .field-input:disabled { background: var(--bg-subtle); color: var(--text-muted); cursor: not-allowed; }
+    /* Sans cette règle le navigateur choisit son gris : quasi invisible sur fond
+       sombre. Or tous les champs du builder démarrent vides, donc c'est ce texte
+       que l'on voit en premier. */
+    .field-input::placeholder, .member-tools input::placeholder, .strike-textarea::placeholder { color: var(--text-muted); opacity: 1; }
 
     .notice { padding: 0.75rem 1rem; border-radius: var(--radius-sm); font-size: 0.85rem; border: 1px solid transparent; }
     .notice-success { background: var(--success-bg); color: var(--success); border-color: rgba(21, 128, 61, 0.2); }
@@ -598,8 +613,8 @@
       font: inherit;
       font-size: 0.85rem;
       color: var(--text-main);
-      background: var(--bg-subtle);
-      border: 1px solid var(--border);
+      background: var(--field-bg);
+      border: 1px solid var(--field-border);
       border-radius: var(--radius-sm);
       padding: 0.5rem 0.6rem;
     }
