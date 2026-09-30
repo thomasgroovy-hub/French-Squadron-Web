@@ -112,7 +112,6 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>
       <h2>Pages et questions</h2>
       <span class="row-aside">
-        <button type="submit" name="action" value="add_question" class="btn btn-outline btn-sm">Ajouter une question</button>
         <button type="submit" name="action" value="add_page" class="btn btn-outline btn-sm">Ajouter une page</button>
       </span>
     </div>
@@ -121,26 +120,35 @@
       Un formulaire sans page reste une page unique, sans titre.
     </p>
 
+    <%# Repli : les pages sont dérivées des questions par le service, mais un
+        appelant qui ne passe pas par `withPages()` (fixture de test, ancien rendu)
+        doit obtenir la page unique historique plutôt qu'une vue qui plante. %>
+    <%
+      const pages = (Array.isArray(form.pages) && form.pages.length)
+        ? form.pages
+        : [{ position: 0, number: 1, count: 1, title: null, questions: form.questions || [] }];
+    %>
+
     <%# `flatIndex` suit l'ordre réel du POST : les tableaux `question_*[]` sont
         indexés à plat, et le bouton d'un formulaire encore nouveau n'a pas d'id
-        pour designer sa ligne. %>
+        pour désigner sa ligne. %>
     <% let flatIndex = 0; %>
     <div class="stack" id="question-list">
-      <% form.pages.forEach((page, pageIndex) => { %>
-        <fieldset class="page-block" data-page-block>
-          <legend class="page-legend">Page <%= page.number %> sur <%= form.pages.length %></legend>
+      <% pages.forEach((page, pageIndex) => { %>
+        <section class="page-block" data-page-block>
+          <header class="page-legend">Page <%= page.number %> sur <%= pages.length %></header>
 
           <div class="field-block">
             <label class="field-label" for="page-title-<%= pageIndex %>">Titre de la page</label>
             <input class="field-input" id="page-title-<%= pageIndex %>" type="text" name="page_title[<%= pageIndex %>]" value="<%= page.title || '' %>" maxlength="120" placeholder="Laissez vide pour ne pas afficher de titre">
           </div>
 
-          <div class="row-aside" style="justify-content: space-between; margin-bottom: 0.5rem;">
+          <div class="row-aside page-actions">
             <button type="submit" name="action" value="add_question:<%= page.position %>" class="btn btn-outline btn-sm">Ajouter une question</button>
-            <%# La dernière page ne peut pas partir : il resterait un formulaire sans
+            <%# La seule page du formulaire ne peut pas partir : il ne resterait
                 aucune question à afficher. %>
-            <% if (form.pages.length > 1) { %>
-              <button type="submit" name="action" value="remove_page:<%= pageIndex %>" class="btn btn-outline btn-sm" title="Les questions de cette page rejoignent la page précédente">Supprimer la page</button>
+            <% if (pages.length > 1) { %>
+              <button type="submit" name="action" value="remove_page:<%= pageIndex %>" class="btn btn-outline btn-sm btn-ghost-danger" title="Les questions de cette page rejoignent la page précédente">Supprimer la page</button>
             <% } %>
           </div>
 
@@ -222,7 +230,7 @@
               </div>
             <% } %>
           </div>
-        </fieldset>
+        </section>
       <% }); %>
     </div>
   </section>

@@ -435,10 +435,20 @@
     .option-editor[hidden] { display: none; }
 
     /* Pages : dans le builder, un bloc de questions ; côté candidat, une page de
-       formulaire. Le `<fieldset>` du builder est neutralisé pour ne pas hériter du
-       style par défaut des navigateurs sur la bordure et la légende. */
+       formulaire. Le bloc du builder est un `div` (et non un `fieldset`) : le
+       `legend` d'un `fieldset` est retiré du flux et vient se poser sur la
+       bordure, par-dessus le premier champ. */
     .page-block { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1rem; margin: 0; display: grid; gap: 0.75rem; background: var(--bg-elevated); }
-    .page-legend { padding: 0 0.4rem; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+    .page-legend { padding: 0; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+    /* Actions d'une page : les deux boutons de même taille, calés sur les deux
+       bords pour que la colonne de droite reste alignée d'une page à l'autre. */
+    .page-actions { justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+    .page-actions .btn { flex: 1 1 auto; justify-content: center; }
+    .page-actions .btn:first-child { margin-right: auto; }
+    /* Même gabarit que les autres boutons, seule la teinte change : la suppression
+       se distingue sans casser l'alignement de la rangée. */
+    .btn-ghost-danger { color: var(--danger); border-color: rgba(220, 38, 38, 0.28); }
+    .btn-ghost-danger:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger); border-color: rgba(220, 38, 38, 0.45); }
     .form-page { display: grid; gap: 1rem; }
     /* La pagination n'est activée qu'une fois le script passé : sans lui, toutes
        les pages restent visibles et le formulaire reste postable en un envoi. */

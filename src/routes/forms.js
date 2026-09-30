@@ -12,6 +12,7 @@ import { webConfig } from '../config.js';
 import {
   FIELD_TYPES,
   FIELD_TYPE_VALUES,
+  DEFAULT_PAGE_POSITION,
   groupQuestionsIntoPages,
   isChoiceFieldType,
   MAX_OPTIONS_PER_QUESTION,
@@ -209,8 +210,13 @@ function parsePageTitles(value) {
 
 /** Position de page normalisée : un index absent ou aberrant retombe sur 0. */
 function normalizePagePosition(value) {
-  const index = Number.parseInt(typeof value === 'string' ? value : '', 10);
-  if (!Number.isInteger(index) || index < 0 || index >= MAX_PAGES_PER_FORM) return 0;
+  // Accepte un nombre comme une chaîne : `parseQuestions` produit des positions
+  // numériques, et la disposition des pages est ensuite renormalisée sur ces
+  // nombres. Une version strictement `typeof value === 'string'` renvoyait 0 pour
+  // toute position numérique, ce qui fusionnait toutes les pages en page 0 et
+  // rendait la création de page inopérante.
+  const index = Number.parseInt(String(value ?? '').trim(), 10);
+  if (!Number.isInteger(index) || index < 0 || index >= MAX_PAGES_PER_FORM) return DEFAULT_PAGE_POSITION;
   return index;
 }
 
@@ -279,29 +285,69 @@ function moveQuestion(questions, questionTarget, direction) {
  * à faire rejoindre la page précédente à ses questions : il n'y a pas de ligne
  * « page » à créer ou à retirer, seulement des questions à regrouper.
  */
+function pagePositions(questions) {
+  const positions = [];
+  for (const question of questions) {
+    const position = normalizePagePosition(question.pagePosition);
+    if (!positions.includes(position)) positions.push(position);
+  }
+  return positions;
+}
+
 function countPages(questions) {
-  const positions = new Set(questions.map((question) => question.pagePosition || 0));
-  return Math.max(positions.size, 1);
+  return Math.max(pagePositions(questions).length, 1);
+}
+
+/**
+ * Position d'une page neuve : le maximum des positions existantes plus un.
+ * Compter les pages aurait suffi tant que les positions étaient contiguës, mais
+ * une suppression laisse un trou et la nouvelle page atterrissait alors sur une
+ * page existante au lieu d'en créer une.
+ */
+function nextPagePosition(questions) {
+  const positions = pagePositions(questions);
+  return positions.length ? Math.max(...positions) + 1 : DEFAULT_PAGE_POSITION;
+}
+
+/**
+ * Renumérote les pages en 0, 1, 2… dans l'ordre du questionnaire.
+ *
+ * Une page est une suite de questions consécutives partageant `pagePosition` ;
+ * la renumérotation rend la position identique au rang de la page. Sans cela, le
+ * titre saisi dans `page_title[n]` (indexé sur le rang) et la position stockée
+ * finissent par diverger après une suppression, et une page neuve peut hériter
+ * du numéro d'une page existante.
+ */
+function normalizePageLayout(questions) {
+  let index = 0;
+  let current = null;
+  for (const question of questions) {
+    const position = normalizePagePosition(question.pagePosition);
+    if (position !== current) {
+      current = position;
+      index += 1;
+    }
+    question.pagePosition = index - 1;
+  }
+  return questions;
 }
 
 function removePage(questions, target) {
   const index = Number.parseInt(String(target ?? '').trim(), 10);
   if (!Number.isInteger(index) || index < 0) return questions;
-  // Les pages sont identifiées par leur valeur, pas par leur rang : un
-  // questionnaire dont les questions ne sont pas encore toutes remplies peut
-  // avoir des positions non contiguës.
-  const positions = [];
-  for (const question of questions) {
-    const position = question.pagePosition || 0;
-    if (!positions.includes(position)) positions.push(position);
-  }
+  const positions = pagePositions(questions);
   const removed = positions[index];
-  if (removed === undefined) return questions;
-  // La dernière page ne peut pas être supprimée : le formulaire en garderait
+  // La seule page du formulaire ne peut pas être supprimée : il en resterait
   // zéro, et il n'y aurait plus rien à afficher.
-  const fallback = positions[index - 1] ?? 0;
+  if (removed === undefined || positions.length < 2) return questions;
+  // Les questions de la page retirée rejoignent la page précédente, ou la
+  // suivante quand c'est la première. Leur titre est effacé au passage pour que
+  // ce soit celui de la page survivante qui s'affiche.
+  const fallback = positions[index - 1] ?? positions[1] ?? removed;
   return questions.map((question) => (
-    (question.pagePosition || 0) === removed ? { ...question, pagePosition: fallback } : question
+    normalizePagePosition(question.pagePosition) === removed
+      ? { ...question, pagePosition: fallback, pageTitle: '' }
+      : question
   ));
 }
 
@@ -334,6 +380,11 @@ function addQuestionTo(questions, pageTarget) {
 }
 
 function applyStructuralAction(action, move, questions) {
+  // Les deux gestionnaires POST passent tous deux par ici, y compris quand
+  // aucune action structurelle n'est demandée : normaliser une seule fois garantit
+  // que positions et rangs ne peuvent pas diverger, quel que soit le POST reçu.
+  normalizePageLayout(questions);
+
   if (action === 'add_question' || action.startsWith('add_question:')) {
     // Une page est délimitée par la valeur `pagePosition` des questions
     // voisines, pas par son rang : c'est cette valeur que le bouton envoie.
@@ -347,7 +398,6 @@ function applyStructuralAction(action, move, questions) {
 
   if (action === 'add_page') {
     if (questions.length < MAX_QUESTIONS && countPages(questions) < MAX_PAGES_PER_FORM) {
-      const pagePosition = countPages(questions);
       questions.push({
         id: null,
         label: '',
@@ -355,10 +405,9 @@ function applyStructuralAction(action, move, questions) {
         fieldType: FIELD_TYPES.SHORT,
         options: [],
         imageUrl: null,
-        pagePosition,
+        pagePosition: nextPagePosition(questions),
         pageTitle: '',
       });
-      return { questions, notice: 'add_page' };
     }
     return { questions, notice: 'add_page' };
   }
