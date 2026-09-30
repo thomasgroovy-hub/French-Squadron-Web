@@ -210,15 +210,17 @@ test('aucune couleur claire codée en dur ne casse le thème sombre', async () =
       // Seules les trois palettes déclarées (claire, sombre, rose) et la couleur
       // de marque Discord utilisent des littéraux. Toute autre couleur en dur
       // casserait le basculement de thème.
-      const declared = new Set(['#f7f7f8', '#ffffff', '#e5e7eb', '#d1d5db', '#111827', '#6b7280',
-        '#475569', '#64748b', '#dc2626', '#fee2e2', '#b45309', '#fef3c7', '#15803d', '#dcfce7',
-        '#0f1115', '#171a21', '#1e222b', '#22262f', '#1a1e26', '#2a2f3a', '#3a4150',
-        '#e8eaed', '#9aa3b2', '#7fd1c1', '#a5e3d6', '#f87171', '#3a1c1c', '#fbbf24',
-        '#362a10', '#4ade80', '#102c1e', '#526d68', '#62857c', '#fff',
-        // Thème rose (easter egg) : la palette est scoped par [data-theme="rose"].
-        '#2a141c', '#351922', '#40202a', '#4a2531', '#3d1d26', '#5c2f3d', '#7a3f52',
-        '#ffeef4', '#d9a7b9', '#ff9ebb', '#ffb8cd', '#ff8fa8', '#4d1f2b', '#ffc98a',
-        '#4d3520', '#ffa8c4', '#4a2130']);
+const declared = new Set(['#f7f7f8', '#ffffff', '#e5e7eb', '#d1d5db', '#111827', '#6b7280',
+  '#71717A', '#52525B', '#E53E3E', '#3A1C1C', '#E5A00F', '#362A10',
+  '#22C55E', '#102C1E', '#e8eaed', '#9aa3b2', '#526d68', '#62857c', '#fff',
+  // Theme rose (easter egg) : la palette est scoped par [data-theme="rose"].
+  '#2a141c', '#351922', '#40202a', '#4a2531', '#3d1d26', '#5c2f3d', '#7a3f52',
+  '#ffeef4', '#d9a7b9', '#ff9ebb', '#ffb8cd', '#ff8fa8', '#4d1f2b', '#ffc98a',
+  '#4d3520', '#ffa8c4', '#4a2130', '#09090B', '#0F0F11', '#111113', '#18181B',
+  '#27272A', '#3F3F46', '#F4F4F5', '#A1A1AA', '#71717A', '#52525B',
+  '#E53E3E', '#3A1C1C', '#E5A00F', '#362A10', '#22C55E', '#102C1E',
+  '#526d68', '#62857c', '#fff'
+]);
 
       const hardcoded = [...head.matchAll(/(?:background|background-color|color)\s*:\s*(#[0-9a-f]{3,8})/gi)]
         .map((m) => m[1].toLowerCase())

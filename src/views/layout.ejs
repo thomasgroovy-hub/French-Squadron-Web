@@ -3,7 +3,7 @@
   <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#0f1115" id="theme-color-meta">
+  <meta name="theme-color" content="#09090B" id="theme-color-meta">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title><%= typeof title !== 'undefined' ? title : 'Site-66' %></title>
   <script>
@@ -49,27 +49,27 @@
 
     /* Thème sombre — appliqué par défaut, surchargeable par data-theme="light". */
     [data-theme="dark"] {
-      --bg-main: #0f1115;
-      --bg-card: #171a21;
-      --bg-subtle: #1e222b;
-      --bg-pill: #22262f;
-      --bg-elevated: #1a1e26;
-      --border: #2a2f3a;
-      --border-strong: #3a4150;
-      --text-main: #e8eaed;
-      --text-muted: #9aa3b2;
-      --accent: #7fd1c1;
-      --accent-hover: #a5e3d6;
-      --danger: #f87171;
-      --danger-bg: #3a1c1c;
-      --warning: #fbbf24;
-      --warning-bg: #362a10;
-      --success: #4ade80;
-      --success-bg: #102c1e;
+      --bg-main: #09090B;
+      --bg-card: #0F0F11;
+      --bg-subtle: #111113;
+      --bg-pill: #18181B;
+      --bg-elevated: #27272A;
+      --border: #27272A;
+      --border-strong: #3F3F46;
+      --text-main: #F4F4F5;
+      --text-muted: #A1A1AA;
+      --accent: #71717A;
+      --accent-hover: #52525B;
+      --danger: #E53E3E;
+      --danger-bg: #3A1C1C;
+      --warning: #E5A00F;
+      --warning-bg: #362A10;
+      --success: #22C55E;
+      --success-bg: #102C1E;
       --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 14px rgba(0, 0, 0, 0.3);
       --hero-ring: rgba(232, 234, 237, 0.07);
       --hero-ring-glow: rgba(232, 234, 237, 0.025);
-      --theme-color: #0f1115;
+      --theme-color: #09090B;
     }
 
     [data-theme="light"] {
@@ -627,7 +627,7 @@
         var resolved = THEMES.indexOf(theme) === -1 ? 'dark' : theme;
         document.documentElement.setAttribute('data-theme', resolved);
         if (meta) {
-          meta.setAttribute('content', getComputedStyle(document.documentElement).getPropertyValue('--theme-color').trim() || (resolved === 'light' ? '#f7f7f8' : '#0f1115'));
+          meta.setAttribute('content', getComputedStyle(document.documentElement).getPropertyValue('--theme-color').trim() || (resolved === 'light' ? '#f7f7f8' : '#09090B'));
         }
         try { window.localStorage.setItem(STORAGE_KEY, resolved); } catch (error) {}
         toggle.setAttribute('aria-pressed', resolved === 'light' ? 'true' : 'false');
