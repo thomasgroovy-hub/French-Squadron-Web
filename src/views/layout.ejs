@@ -284,6 +284,9 @@
       width: 100%;
     }
 
+    /* Trois colonnes : le copyright et les liens restent exactement centrés,
+       tandis que la version se pose à droite. Sans la colonne vide de gauche,
+       le texte décalerait d autant que la version occupe de largeur. */
     .footer {
       border-top: 1px solid var(--border);
       padding: 1.5rem;
@@ -291,6 +294,17 @@
       color: var(--text-muted);
       font-size: 0.85rem;
       background: var(--bg-elevated);
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 1rem;
+    }
+    .footer-version { justify-self: end; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    @media (max-width: 620px) {
+      /* En dessous, la ligne tiendrait mal : la version passe sous le texte,
+         toujours centrée, plutôt que de le pousser hors de l'écran. */
+      .footer { grid-template-columns: 1fr; }
+      .footer-version { justify-self: center; }
     }
 
     /* Utilitaires de cartes et mise en page */
@@ -751,14 +765,18 @@
   </main>
 
   <footer class="footer">
-    <span>Site-66 &copy; <%= new Date().getFullYear() %></span>
-    <span> · <a href="/terms">Conditions d’utilisation</a> · <a href="/privacy">Confidentialité</a>
+    <%# Colonne gauche vide : elle équilibre la version, gardée à droite, pour
+        que le copyright reste centré sans calcul de marge. Le copyright et les
+        liens partagent la colonne du milieu, comme une seule ligne centrée. %>
+    <span aria-hidden="true"></span>
+    <span>Site-66 &copy; <%= new Date().getFullYear() %> · <a href="/terms">Conditions d’utilisation</a> · <a href="/privacy">Confidentialité</a>
       <%# L'URL Discord vient de la configuration serveur (DISCORD_URL). Sans
           variable définie, on retombe sur un lien inerte plutôt que cassé. %>
       · <a href="<%= webConfig?.discordUrl || '#' %>" target="_blank" rel="noopener noreferrer">Discord</a>
       <%# TODO: remplacer par l'URL du groupe Roblox %>
       · <a href="#" target="_blank" rel="noopener noreferrer">Roblox</a>
     </span>
+    <span class="footer-version"><%= siteVersion %></span>
   </footer>
   <script>
     (function () {

@@ -10,7 +10,7 @@ import { createPermadeathRouter } from './routes/permadeath.js';
 
 import { getDatabasePool, getSiteDatabasePool, findMissingEnv } from './database.js';
 import { renderDiscordInline, renderDiscordMarkdown, stripDiscordMarkdown } from './utils/discord-markdown.js';
-import { printVersionBanner } from './version.js';
+import { printVersionBanner, SITE_VERSION } from './version.js';
 
 const SITE_DATABASE_VARS = ['SITE_MYSQL_HOST', 'SITE_MYSQL_USER', 'SITE_MYSQL_PASSWORD', 'SITE_MYSQL_DATABASE'];
 
@@ -41,6 +41,8 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
   // Plain text, for the attributes that cannot hold markup (`aria-label`,
   // `title`, `placeholder`).
   app.locals.stripDiscordMarkdown = stripDiscordMarkdown;
+  // Shown in the footer: a user reporting a bug can name the build they see.
+  app.locals.siteVersion = SITE_VERSION;
 
   // Middleware pour envelopper automatiquement les vues dans layout.ejs
   app.use((req, res, next) => {

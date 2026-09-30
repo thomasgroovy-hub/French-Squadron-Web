@@ -170,7 +170,11 @@
   }
 
   function runTool(tool) {
-    var field = focusedField;
+    /* La barre agit sur le champ auquel elle est accrochée : c'est lui que
+       l'utilisateur voit sous les boutons, et c'est encore lui si le focus a
+       bougé entre le `mousedown` et le `click`. Le champ suivi sert de repli
+       pour les raccourcis clavier, quand aucune barre n'est affichée. */
+    var field = anchoredField || focusedField;
     if (!field) return;
     if (tool.link) applyLink(field);
     else if (tool.line) applyLinePrefix(field, tool.line);
@@ -373,8 +377,11 @@
       return;
     }
     focusedField = field;
+    /* Un champ focalisé sans sélection ne peut pas ancrer de barre : celle qui
+       serait affichée appartient à un autre champ, ou à celui-ci dont la
+       sélection vient de s'effondrer. Dans les deux cas elle doit partir. */
     if (!hasSelection(field)) {
-      if (anchoredField === field) hide();
+      if (anchoredField) hide();
       return;
     }
     if (anchoredField !== field) show(field);
@@ -392,8 +399,13 @@
   function bind() {
     buildBar();
 
+    /* Un clic sur un bouton de la barre est `mousedown` puis `mouseup` puis
+       `click`, et le `mouseup` porte sur le bouton. Répondre à cet événement
+       effaçait donc le champ suivi, et le `click` qui suit n'avait plus rien à
+       mettre en forme. On ne réagit donc qu'aux champs, et c'est `focusin` qui
+       décide d'un abandon. */
     document.addEventListener('mouseup', function (event) {
-      sync(event.target);
+      if (isTextField(event.target)) sync(event.target);
     }, true);
 
     document.addEventListener('keyup', function (event) {
@@ -442,6 +454,10 @@
         return;
       }
       if (!focusedField) return;
+      /* Le champ doit encore avoir le focus : sans cette garde, un Ctrl+B
+         n'importe où ailleurs dans la page viendrait écrire dans un champ
+         quitté depuis longtemps. */
+      if (document.activeElement !== focusedField) return;
       /* Un raccourci exige exactement une touche de modificateur : ni aucune,
          ni les deux à la fois. */
       if (event.ctrlKey === event.metaKey) return;
