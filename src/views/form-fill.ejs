@@ -2,12 +2,16 @@
     `<form>`. Il n'existe donc aucun bouton, aucune touche Entrée et aucun script
     capable de poster quoi que ce soit : la preview est fausse par construction,
     pas par convention. %>
-<% const isPreview = typeof isPreview !== 'undefined' && isPreview; %>
+<%# Le nom local ne peut pas être celui de la variable de locals : `const isPreview`
+    = typeof isPreview…` se lirait dans sa propre zone morte et lèverait un
+    ReferenceError sur le premier octet du rendu, pour le candidat comme pour
+    l'aperçu. %>
+<% const previewMode = typeof isPreview !== 'undefined' && isPreview; %>
 <% const fillBackUrl = typeof backUrl !== 'undefined' ? backUrl : '/candidatures'; %>
 <a href="<%= fillBackUrl %>" class="btn btn-outline btn-sm" style="width: fit-content;">Retour aux candidatures</a>
 
 <section class="card" style="margin-top: 1rem;">
-  <p class="eyebrow"><%= isPreview ? 'Aperçu du formulaire' : 'Formulaire' %></p>
+  <p class="eyebrow"><%= previewMode ? 'Aperçu du formulaire' : 'Formulaire' %></p>
   <h1 style="font-size: 1.8rem; margin: 0.35rem 0;"><%= form.title %></h1>
   <% if (form.description) { %>
     <p class="muted" style="margin-top: 0.5rem;"><%= form.description %></p>
@@ -26,12 +30,16 @@
 <%
   const accepted = typeof alreadyAccepted !== 'undefined' ? alreadyAccepted : false;
   const pending = typeof alreadySubmitted !== 'undefined' ? alreadySubmitted : false;
+  // Toutes les routes qui rendent ce gabarit passent `answers`, mais une réponse
+  // absente ne doit pas rendre la page illisible : `&&` sur un identifiant non
+  // déclaré lèverait un ReferenceError au lieu de valoir false.
+  const givenAnswers = typeof answers !== 'undefined' && answers ? answers : {};
 %>
 <% if (error) { %>
   <div class="notice notice-danger" style="margin-top: 1rem;"><%= error %></div>
 <% } %>
 
-<% if (isPreview) { %>
+<% if (previewMode) { %>
   <div class="notice notice-warning" style="margin-top: 1rem;">
     Aperçu : ceci est exactement ce que verra un candidat, mais rien n’est enregistré.
     Les champs sont là pour la démonstration et ne sont pas envoyés.
@@ -57,7 +65,7 @@
     </div>
   </section>
 <% } else { %>
-  <% if (isPreview) { %>
+  <% if (previewMode) { %>
     <div class="stack" id="form-pages" data-preview="1" style="margin-top: 1rem;">
   <% } else { %>
     <form action="/candidatures/<%= form.id %>/reponses" method="post" class="stack" id="form-pages" style="margin-top: 1rem;">
@@ -82,7 +90,7 @@
           <% page.questions.forEach((question) => { %>
             <%
               questionNumber += 1;
-              const raw = answers && answers[String(question.id)];
+              const raw = givenAnswers[String(question.id)];
               // Un choix multiple est stocké comme un tableau : la vue doit donc lire
               // les deux formes selon le type de la question.
               const value = question.fieldType === 'choice_multiple'
@@ -110,7 +118,7 @@
               <% } else if (question.fieldType === 'date') { %>
                 <input class="field-input" type="date" name="answer_<%= question.id %>" value="<%= value %>">
               <% } else if (question.fieldType === 'choice_single') { %>
-                <select class="field-input" name="answer_<%= question.id %>" <%= isPreview ? '' : 'required' %>>
+                <select class="field-input" name="answer_<%= question.id %>" <%= previewMode ? '' : 'required' %>>
                   <option value="">Choisissez une réponse</option>
                   <% options.forEach((option) => { %>
                     <option value="<%= option %>" <%= value === option ? 'selected' : '' %>><%= option %></option>
@@ -152,7 +160,7 @@
           <% } %>
           <% if (pageIndex < pages.length - 1) { %>
             <button type="button" class="btn btn-outline" data-page-next>Page suivante</button>
-          <% } else if (isPreview) { %>
+          <% } else if (previewMode) { %>
             <button type="button" class="btn btn-discord">Envoyer ma candidature</button>
           <% } else { %>
             <button type="submit" class="btn btn-discord">Envoyer ma candidature</button>
@@ -160,7 +168,7 @@
         </div>
       </section>
     <% }); %>
-  <% if (isPreview) { %>
+  <% if (previewMode) { %>
     </div>
   <% } else { %>
     </form>
