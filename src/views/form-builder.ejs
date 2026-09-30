@@ -1,4 +1,9 @@
-<a href="/candidatures" class="btn btn-outline btn-sm" style="width: fit-content;">Retour aux candidatures</a>
+<%# Depuis l'onglet Administration, « retour » doit ramener à l'onglet
+    Administration et non à la liste des candidatures du membre : un
+    administrateur qui consulte le formulaire d'autrui n'est pas sur son propre
+    onglet. %>
+<% const backUrl = typeof backTo !== 'undefined' ? backTo : '/candidatures'; %>
+<a href="<%= backUrl %>" class="btn btn-outline btn-sm" style="width: fit-content;">Retour aux candidatures</a>
 
 <section class="card" style="margin-top: 1rem;">
   <p class="eyebrow"><%= isNew ? 'Nouveau formulaire' : 'Gestion du formulaire' %></p>
@@ -7,6 +12,14 @@
     <span class="pill"><span class="badge badge-<%= form.status === 'open' ? 'success' : (form.status === 'closed' ? 'danger' : 'warning') %>"><%= form.statusLabel %></span></span>
     <% if (form.grantedRoleId) { %>
       <span class="pill">Rôle attribué : <span class="pill-mono"><%= form.grantedRoleName || form.grantedRoleId %></span></span>
+    <% } %>
+    <% if (!isNew) { %>
+      <%# L'aperçu n'existe qu'une fois le formulaire enregistré : avant, il n'y
+          a pas encore d'URL stable à partager, et le brouillon vit dans le
+          formulaire de la page. %>
+      <span class="pill">
+        <a class="btn btn-outline btn-sm" href="/candidatures/<%= form.id %>/apercu">Prévisualiser le formulaire</a>
+      </span>
     <% } %>
   </div>
 </section>
@@ -97,75 +110,120 @@
   <section class="card">
     <div class="section-head">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>
-      <h2>Questions</h2>
+      <h2>Pages et questions</h2>
       <span class="row-aside">
         <button type="submit" name="action" value="add_question" class="btn btn-outline btn-sm">Ajouter une question</button>
+        <button type="submit" name="action" value="add_page" class="btn btn-outline btn-sm">Ajouter une page</button>
       </span>
     </div>
+    <p class="question-help" style="margin: 0 0 1rem;">
+      Une page regroupe des questions sous un titre, et le candidat les parcourt une par une.
+      Un formulaire sans page reste une page unique, sans titre.
+    </p>
 
+    <%# `flatIndex` suit l'ordre réel du POST : les tableaux `question_*[]` sont
+        indexés à plat, et le bouton d'un formulaire encore nouveau n'a pas d'id
+        pour designer sa ligne. %>
+    <% let flatIndex = 0; %>
     <div class="stack" id="question-list">
-      <% form.questions.forEach((question, index) => { %>
-        <%
-          const options = Array.isArray(question.options) ? question.options : [];
-          const usesOptions = question.fieldType === 'choice_single' || question.fieldType === 'choice_multiple';
-          // Une question pas encore enregistrée n'a pas d'id : les boutons la
-          // visent par sa position, qui est exactement l'ordre affiché.
-          const rowKey = question.id ? String(question.id) : `row:${index}`;
-        %>
-        <article class="builder-row" draggable="true">
-          <div class="builder-order">
-            <span class="builder-handle" title="Glisser pour réordonner" aria-hidden="true">⠿</span>
-            <button type="submit" name="move" value="up:<%= rowKey %>" class="icon-btn" title="Monter" <%= index === 0 ? 'disabled' : '' %>>▲</button>
-            <span class="question-index"><%= index + 1 %></span>
-            <button type="submit" name="move" value="down:<%= rowKey %>" class="icon-btn" title="Descendre" <%= index === form.questions.length - 1 ? 'disabled' : '' %>>▼</button>
+      <% form.pages.forEach((page, pageIndex) => { %>
+        <fieldset class="page-block" data-page-block>
+          <legend class="page-legend">Page <%= page.number %> sur <%= form.pages.length %></legend>
+
+          <div class="field-block">
+            <label class="field-label" for="page-title-<%= pageIndex %>">Titre de la page</label>
+            <input class="field-input" id="page-title-<%= pageIndex %>" type="text" name="page_title[<%= pageIndex %>]" value="<%= page.title || '' %>" maxlength="120" placeholder="Laissez vide pour ne pas afficher de titre">
           </div>
-          <div class="builder-body">
-            <input type="hidden" name="question_id[]" value="<%= question.id || '' %>">
-            <label class="field-label" for="q-label-<%= question.id || 'new' + index %>">Intitulé</label>
-            <input class="field-input" id="q-label-<%= question.id || 'new' + index %>" type="text" name="question_label[]" value="<%= question.label %>" maxlength="200" placeholder="Pourquoi souhaitez-vous rejoindre l’équipe ?">
 
-            <label class="field-label" for="q-help-<%= question.id || 'new' + index %>">Description / aide</label>
-            <input class="field-input" id="q-help-<%= question.id || 'new' + index %>" type="text" name="question_help[]" value="<%= question.helpText %>" maxlength="500" placeholder="Précisez ce que vous attendez comme réponse.">
+          <div class="row-aside" style="justify-content: space-between; margin-bottom: 0.5rem;">
+            <button type="submit" name="action" value="add_question:<%= page.position %>" class="btn btn-outline btn-sm">Ajouter une question</button>
+            <%# La dernière page ne peut pas partir : il resterait un formulaire sans
+                aucune question à afficher. %>
+            <% if (form.pages.length > 1) { %>
+              <button type="submit" name="action" value="remove_page:<%= pageIndex %>" class="btn btn-outline btn-sm" title="Les questions de cette page rejoignent la page précédente">Supprimer la page</button>
+            <% } %>
+          </div>
 
-            <label class="field-label" for="q-type-<%= question.id || 'new' + index %>">Type de champ</label>
-            <select class="field-input" id="q-type-<%= question.id || 'new' + index %>" name="question_type[]" data-options-toggle>
-              <option value="short" <%= question.fieldType === 'short' ? 'selected' : '' %>>Petite réponse (une ligne)</option>
-              <option value="long" <%= question.fieldType === 'long' ? 'selected' : '' %>>Longue réponse (zone de texte)</option>
-              <option value="choice_single" <%= question.fieldType === 'choice_single' ? 'selected' : '' %>>Choix unique (liste déroulante)</option>
-              <option value="choice_multiple" <%= question.fieldType === 'choice_multiple' ? 'selected' : '' %>>Choix multiple (cases à cocher)</option>
-              <option value="date" <%= question.fieldType === 'date' ? 'selected' : '' %>>Date</option>
-            </select>
+          <div class="stack" data-page-questions>
+            <% page.questions.forEach((question) => { %>
+              <%
+                const index = flatIndex;
+                flatIndex += 1;
+                const options = Array.isArray(question.options) ? question.options : [];
+                const usesOptions = question.fieldType === 'choice_single' || question.fieldType === 'choice_multiple';
+                // Une question pas encore enregistrée n'a pas d'id : les boutons la
+                // visent par sa position, qui est exactement l'ordre affiché.
+                const rowKey = question.id ? String(question.id) : `row:${index}`;
+                // Les flèches ▲▼ ne franchissent pas une page : le serveur refuserait
+                // le déplacement, il ne faut donc pas proposer un bouton inerte.
+                const isFirstOfPage = page.questions[0] === question;
+                const isLastOfPage = page.questions[page.questions.length - 1] === question;
+              %>
+              <article class="builder-row" draggable="true">
+                <div class="builder-order">
+                  <span class="builder-handle" title="Glisser pour réordonner" aria-hidden="true">⠿</span>
+                  <button type="submit" name="move" value="up:<%= rowKey %>" class="icon-btn" title="Monter" <%= isFirstOfPage ? 'disabled' : '' %>>▲</button>
+                  <span class="question-index"><%= index + 1 %></span>
+                  <button type="submit" name="move" value="down:<%= rowKey %>" class="icon-btn" title="Descendre" <%= isLastOfPage ? 'disabled' : '' %>>▼</button>
+                </div>
+                <div class="builder-body">
+                  <input type="hidden" name="question_id[]" value="<%= question.id || '' %>">
+                  <input type="hidden" name="question_page[]" value="<%= page.position %>">
+                  <label class="field-label" for="q-label-<%= question.id || 'new' + index %>">Intitulé</label>
+                  <input class="field-input" id="q-label-<%= question.id || 'new' + index %>" type="text" name="question_label[]" value="<%= question.label %>" maxlength="200" placeholder="Pourquoi souhaitez-vous rejoindre l’équipe ?">
 
-            <%# Éditeur d'options : masqué par le script pour les types sans choix,
-                mais présent dans le HTML pour rester lisible sans JavaScript. %>
-            <div class="option-editor" data-option-editor <%= usesOptions ? '' : 'hidden' %>>
-              <p class="question-help" style="margin: 0.4rem 0 0.3rem;">Options proposées au candidat (une par ligne).</p>
-              <div data-option-rows>
-                <% options.forEach((option) => { %>
-                  <div class="option-row">
-                    <input class="field-input" type="text" name="question_option[<%= index %>][]" value="<%= option %>" maxlength="200" placeholder="Option">
-                    <button type="button" class="icon-btn icon-btn-danger" data-option-remove title="Retirer cette option">✕</button>
+                  <label class="field-label" for="q-help-<%= question.id || 'new' + index %>">Description / aide</label>
+                  <input class="field-input" id="q-help-<%= question.id || 'new' + index %>" type="text" name="question_help[]" value="<%= question.helpText %>" maxlength="500" placeholder="Précisez ce que vous attendez comme réponse.">
+
+                  <label class="field-label" for="q-image-<%= question.id || 'new' + index %>">Image (facultatif)</label>
+                  <p class="question-help" style="margin: 0.2rem 0 0.3rem;">Collez l’adresse d’une image (http ou https). Elle s’affichera au-dessus du champ de réponse, côté candidat.</p>
+                  <input class="field-input" id="q-image-<%= question.id || 'new' + index %>" type="url" name="question_image[]" value="<%= question.imageUrl || '' %>" maxlength="500" placeholder="https://…/illustration.png">
+                  <% if (question.imageUrl) { %>
+                    <img class="question-image-preview" src="<%= question.imageUrl %>" alt="" loading="lazy">
+                  <% } %>
+
+                  <label class="field-label" for="q-type-<%= question.id || 'new' + index %>">Type de champ</label>
+                  <select class="field-input" id="q-type-<%= question.id || 'new' + index %>" name="question_type[]" data-options-toggle>
+                    <option value="short" <%= question.fieldType === 'short' ? 'selected' : '' %>>Petite réponse (une ligne)</option>
+                    <option value="long" <%= question.fieldType === 'long' ? 'selected' : '' %>>Longue réponse (zone de texte)</option>
+                    <option value="choice_single" <%= question.fieldType === 'choice_single' ? 'selected' : '' %>>Choix unique (liste déroulante)</option>
+                    <option value="choice_multiple" <%= question.fieldType === 'choice_multiple' ? 'selected' : '' %>>Choix multiple (cases à cocher)</option>
+                    <option value="date" <%= question.fieldType === 'date' ? 'selected' : '' %>>Date</option>
+                  </select>
+
+                  <%# Éditeur d'options : masqué par le script pour les types sans choix,
+                      mais présent dans le HTML pour rester lisible sans JavaScript. %>
+                  <div class="option-editor" data-option-editor <%= usesOptions ? '' : 'hidden' %>>
+                    <p class="question-help" style="margin: 0.4rem 0 0.3rem;">Options proposées au candidat (une par ligne).</p>
+                    <div data-option-rows>
+                      <% options.forEach((option) => { %>
+                        <div class="option-row">
+                          <input class="field-input" type="text" name="question_option[<%= index %>][]" value="<%= option %>" maxlength="200" placeholder="Option">
+                          <button type="button" class="icon-btn icon-btn-danger" data-option-remove title="Retirer cette option">✕</button>
+                        </div>
+                      <% }); %>
+                    </div>
+                    <button type="button" class="btn btn-outline btn-sm" data-option-add style="margin-top: 0.5rem; width: fit-content;">Ajouter une option</button>
                   </div>
-                <% }); %>
-              </div>
-              <button type="button" class="btn btn-outline btn-sm" data-option-add style="margin-top: 0.5rem; width: fit-content;">Ajouter une option</button>
-            </div>
-          </div>
-          <div class="builder-actions">
-            <button type="submit" name="action" value="duplicate_question:<%= rowKey %>" class="btn btn-outline btn-sm" title="Dupliquer cette question">Dupliquer</button>
-            <button type="submit" name="action" value="remove_question:<%= rowKey %>" class="icon-btn icon-btn-danger" title="Supprimer la question">✕</button>
-          </div>
-        </article>
-      <% }); %>
+                </div>
+                <div class="builder-actions">
+                  <button type="submit" name="action" value="duplicate_question:<%= rowKey %>" class="btn btn-outline btn-sm" title="Dupliquer cette question">Dupliquer</button>
+                  <button type="submit" name="action" value="remove_question:<%= rowKey %>" class="icon-btn icon-btn-danger" title="Supprimer la question">✕</button>
+                </div>
+              </article>
+            <% }); %>
 
-      <% if (!form.questions.length) { %>
-        <div class="empty-state">
-          <span class="empty-state-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6h13M8 12h13M8 18h13"/></svg>
-          </span>
-          <p>Aucune question pour le moment.</p>
-        </div>
-      <% } %>
+            <% if (!page.questions.length) { %>
+              <div class="empty-state">
+                <span class="empty-state-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6h13M8 12h13M8 18h13"/></svg>
+                </span>
+                <p>Aucune question sur cette page.</p>
+              </div>
+            <% } %>
+          </div>
+        </fieldset>
+      <% }); %>
     </div>
   </section>
 
@@ -265,6 +323,10 @@
           event.dataTransfer.dropEffect = 'move';
           var target = closestRow(event.target);
           if (!target || target === dragged) return;
+          // Une question ne change pas de page au glisser-déposer : le serveur
+          // refuse un déplacement qui franchirait la frontière, autant ne pas
+          // laisser croire que le geste aboutirait.
+          if (target.closest('[data-page-block]') !== dragged.closest('[data-page-block]')) return;
           var box = target.getBoundingClientRect();
           var after = (event.clientY - box.top) > box.height / 2;
           list.insertBefore(dragged, after ? target.nextSibling : target);
@@ -285,11 +347,17 @@
             var label = row.querySelector('.question-index');
             if (label) label.textContent = String(index + 1);
 
-            // Bornes des boutons ▲▼ : le repli sans JavaScript doit rester exact.
+            /* Bornes des boutons ▲▼ : le repli sans JavaScript doit rester exact.
+               La numérotation des questions, elle, reste globale — c'est elle qui
+               donne le `index` des tableaux `question_*[]` postés. */
+            var page = row.closest('[data-page-questions]');
+            var siblings = page
+              ? Array.prototype.slice.call(page.querySelectorAll('.builder-row'))
+              : rows;
             var up = row.querySelector('button[name="move"][value^="up:"]');
             var down = row.querySelector('button[name="move"][value^="down:"]');
-            if (up) up.disabled = index === 0;
-            if (down) down.disabled = index === rows.length - 1;
+            if (up) up.disabled = siblings.indexOf(row) === 0;
+            if (down) down.disabled = siblings.indexOf(row) === siblings.length - 1;
 
             row.querySelectorAll('.option-row input').forEach(function (input) {
               input.name = 'question_option[' + index + '][]';

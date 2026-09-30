@@ -434,6 +434,25 @@
     .option-row .field-input { flex: 1; min-width: 0; }
     .option-editor[hidden] { display: none; }
 
+    /* Pages : dans le builder, un bloc de questions ; côté candidat, une page de
+       formulaire. Le `<fieldset>` du builder est neutralisé pour ne pas hériter du
+       style par défaut des navigateurs sur la bordure et la légende. */
+    .page-block { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1rem; margin: 0; display: grid; gap: 0.75rem; background: var(--bg-elevated); }
+    .page-legend { padding: 0 0.4rem; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+    .form-page { display: grid; gap: 1rem; }
+    /* La pagination n'est activée qu'une fois le script passé : sans lui, toutes
+       les pages restent visibles et le formulaire reste postable en un envoi. */
+    .js-pages .form-page { display: none; }
+    .js-pages .form-page.is-current { display: grid; }
+    .page-head { display: grid; gap: 0.2rem; }
+    .page-title { font-size: 1.35rem; margin: 0; }
+    .page-counter { margin: 0; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+    .page-nav { justify-content: flex-end; }
+    .page-nav .page-nav-start { margin-right: auto; }
+    /* Illustration d'une question : jamais plus haute qu'un quart de l'écran, pour
+       qu'une image imposante ne repousse pas le champ de réponse hors de l'écran. */
+    .question-image, .question-image-preview { display: block; max-width: 100%; max-height: 260px; height: auto; margin: 0 0 0.9rem; border-radius: var(--radius-sm); border: 1px solid var(--border); object-fit: contain; }
+
     .answer-block { padding: 0.9rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-card); }
     .answer-label { display: flex; align-items: flex-start; gap: 0.7rem; margin-bottom: 0.6rem; }
     .answer-value { white-space: pre-wrap; line-height: 1.6; font-size: 0.9rem; color: var(--text-main); }

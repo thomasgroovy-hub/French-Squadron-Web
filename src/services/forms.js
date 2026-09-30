@@ -41,6 +41,48 @@ const FIELD_TYPE_ENUM = FIELD_TYPE_VALUES.map((type) => `'${type}'`).join(', ');
 
 export const MAX_OPTIONS_PER_QUESTION = 50;
 export const MAX_OPTION_LENGTH = 200;
+export const MAX_IMAGE_URL_LENGTH = 500;
+export const MAX_PAGES_PER_FORM = 15;
+export const MAX_PAGE_TITLE_LENGTH = 120;
+
+/**
+ * Pages are derived from the question order: a page is a run of consecutive
+ * questions sharing `page_position`, and its title is carried by the first
+ * question of the run. `0` / no title is therefore the implicit single page of
+ * every form that predates this feature, and the import of a Google Form whose
+ * sections were all skipped lands on the same shape.
+ */
+export const DEFAULT_PAGE_POSITION = 0;
+
+/**
+ * Columns added after `form_questions` was first shipped, replayed on every boot.
+ * The column name is the key; the definition is the full `ADD COLUMN` clause.
+ */
+const QUESTION_COLUMN_MIGRATIONS = Object.freeze([
+  ['image_url', 'image_url VARCHAR(500) NULL AFTER options'],
+  ['page_position', 'page_position INT UNSIGNED NOT NULL DEFAULT 0 AFTER image_url'],
+  ['page_title', 'page_title VARCHAR(120) NULL AFTER page_position'],
+]);
+
+/**
+ * An image is referenced by URL, never uploaded: a form body lives in MySQL, and
+ * storing binaries there (or on the ephemeral container filesystem) would make
+ * the illustration the first thing lost on the next deploy. Only `http(s)` is
+ * accepted, so a `javascript:` or `data:` payload pasted by hand cannot become
+ * an executable `src`.
+ */
+export function normalizeImageUrl(value) {
+  const raw = typeof value === 'string' ? value.trim().slice(0, MAX_IMAGE_URL_LENGTH) : '';
+  if (!raw) return null;
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  return url.href.slice(0, MAX_IMAGE_URL_LENGTH);
+}
 
 /**
  * Normalise une liste d'options : chaîne JSON (base) ou tableau (formulaire
@@ -106,6 +148,9 @@ export async function ensureFormsTables(pool) {
           help_text VARCHAR(500) NULL,
           field_type ENUM(${FIELD_TYPE_ENUM}) NOT NULL DEFAULT 'short',
           options TEXT NULL,
+          image_url VARCHAR(500) NULL,
+          page_position INT UNSIGNED NOT NULL DEFAULT 0,
+          page_title VARCHAR(120) NULL,
           created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           INDEX form_questions_form_idx (form_id, position),
@@ -125,6 +170,14 @@ export async function ensureFormsTables(pool) {
       // a fresh table already carries the column from the CREATE above.
       if (!columns.some((column) => column?.Field === 'options')) {
         await pool.execute('ALTER TABLE form_questions ADD COLUMN options TEXT NULL AFTER field_type');
+      }
+
+      // Illustration and page layout are additive: `image_url` is NULL on every
+      // existing row, and `page_position` defaults to 0, so a form created before
+      // this change keeps rendering as the single implicit page it always was.
+      for (const [column, definition] of QUESTION_COLUMN_MIGRATIONS) {
+        if (columns.some((existing) => existing?.Field === column)) continue;
+        await pool.execute(`ALTER TABLE form_questions ADD COLUMN ${definition}`);
       }
 
       // Without this, MySQL would reject a `choice_single` on a database created
@@ -194,7 +247,53 @@ function mapQuestion(row) {
     fieldType: FIELD_TYPE_VALUES.includes(row.field_type) ? row.field_type : FIELD_TYPES.SHORT,
     // Always a parsed array so the views never have to JSON.parse.
     options: parseQuestionOptions(row.options),
+    // A row written before the column existed reads as UNDEFINED; every consumer
+    // treats that the same as an explicit NULL, so the value is normalised here
+    // rather than at each call site.
+    imageUrl: row.image_url == null ? null : (normalizeImageUrl(row.image_url) ?? null),
+    pagePosition: Number.isInteger(Number(row.page_position)) && Number(row.page_position) >= 0
+      ? Number(row.page_position)
+      : DEFAULT_PAGE_POSITION,
+    pageTitle: cleanPageTitle(row.page_title),
   };
+}
+
+/** Page titles are trimmed and length-capped once, at the boundary. */
+function cleanPageTitle(value) {
+  if (typeof value !== 'string') return '';
+  const title = value.replace(/\s+/g, ' ').trim().slice(0, MAX_PAGE_TITLE_LENGTH);
+  return title || null;
+}
+
+/**
+ * Group an ordered question list into pages.
+ *
+ * The list comes back with every question carrying the page it belongs to; the
+ * title is read from the first question of each run, so a creator who clears a
+ * title does not need to clear it on every row of the page.
+ *
+ * Always returns at least one page, even for an empty form: the fill and preview
+ * views render the same shell either way.
+ */
+export function groupQuestionsIntoPages(questions = []) {
+  const pages = [];
+  for (const question of questions) {
+    const position = Number.isInteger(question?.pagePosition) && question.pagePosition >= 0
+      ? question.pagePosition
+      : DEFAULT_PAGE_POSITION;
+    // A page only exists where a question starts it: an empty page cannot be
+    // stored, and a gap in the numbering must not create a blank page.
+    if (pages.length === 0 || pages[pages.length - 1].position !== position) {
+      pages.push({ position, title: null, questions: [] });
+    }
+    const page = pages[pages.length - 1];
+    if (page.title === null && question.pageTitle) page.title = question.pageTitle;
+    page.questions.push(question);
+  }
+  if (!pages.length) {
+    pages.push({ position: DEFAULT_PAGE_POSITION, title: null, questions: [] });
+  }
+  return pages.map((page, index) => ({ ...page, number: index + 1, count: pages.length }));
 }
 
 function mapResponse(row) {
@@ -322,7 +421,11 @@ export async function getFormById(formId, pool = getDatabasePool(), { withQuesti
 export async function listQuestions(formId, pool = getDatabasePool()) {
   if (!pool || !formId) return [];
   const [rows] = await pool.execute(
-    'SELECT id, form_id, position, label, help_text, field_type, options FROM form_questions WHERE form_id = ? ORDER BY position ASC, id ASC',
+    `SELECT id, form_id, position, label, help_text, field_type, options,
+            image_url, page_position, page_title
+     FROM form_questions
+     WHERE form_id = ?
+     ORDER BY position ASC, id ASC`,
     [formId],
   );
   return rows.map(mapQuestion);
@@ -407,12 +510,41 @@ export async function updateForm({
 }
 
 /**
+ * Resolve, for each question of an ordered list, the page it belongs to and the
+ * title of that page — aligned with the input, one entry per question.
+ *
+ * The builder posts one title per page but one page index per question, so the
+ * title has to be fanned out to every row of the run. Writing it on all of them
+ * (rather than only on the first) is what makes regrouping stable afterwards:
+ * deleting the first question of a page cannot strip that page of its title.
+ */
+export function resolveQuestionPages(questions = []) {
+  const resolved = [];
+  let currentPosition = null;
+  let currentTitle = null;
+  for (const question of questions) {
+    const position = Number.isInteger(question?.pagePosition) && question.pagePosition >= 0
+      ? question.pagePosition
+      : DEFAULT_PAGE_POSITION;
+    if (position !== currentPosition) {
+      currentPosition = position;
+      currentTitle = null;
+    }
+    // First non-empty title of the run wins: the builder clears the others.
+    if (currentTitle === null && question?.pageTitle) currentTitle = question.pageTitle;
+    resolved.push({ pagePosition: currentPosition, pageTitle: currentTitle });
+  }
+  return resolved;
+}
+
+/**
  * Rewrites the ordered question list of a form while keeping the `id` of every
  * question that is still there. Responses store their answers as
  * `{ [questionId]: text }`, so regenerating ids here would silently detach
  * every answer already collected on a form that gets edited.
  */
 async function syncQuestions(formId, questions, pool) {
+  const pages = resolveQuestionPages(questions);
   const [existingRows] = await pool.execute(
     'SELECT id FROM form_questions WHERE form_id = ? FOR UPDATE',
     [formId],
@@ -427,19 +559,45 @@ async function syncQuestions(formId, questions, pool) {
     const options = isChoiceFieldType(fieldType)
       ? JSON.stringify(parseQuestionOptions(question.options))
       : null;
+    const layout = pages[index] || { pagePosition: DEFAULT_PAGE_POSITION, pageTitle: null };
+    const imageUrl = normalizeImageUrl(question.imageUrl);
     const id = Number.parseInt(question.id, 10);
     if (Number.isInteger(id) && existingIds.has(id)) {
       keptIds.add(id);
       await pool.execute(
         `UPDATE form_questions
-         SET position = ?, label = ?, help_text = ?, field_type = ?, options = ?
+         SET position = ?, label = ?, help_text = ?, field_type = ?, options = ?,
+             image_url = ?, page_position = ?, page_title = ?
          WHERE id = ? AND form_id = ?`,
-        [index, question.label, question.helpText || null, fieldType, options, id, formId],
+        [
+          index,
+          question.label,
+          question.helpText || null,
+          fieldType,
+          options,
+          imageUrl,
+          layout.pagePosition,
+          layout.pageTitle,
+          id,
+          formId,
+        ],
       );
     } else {
       const [inserted] = await pool.execute(
-        'INSERT INTO form_questions (form_id, position, label, help_text, field_type, options) VALUES (?, ?, ?, ?, ?, ?)',
-        [formId, index, question.label, question.helpText || null, fieldType, options],
+        `INSERT INTO form_questions
+           (form_id, position, label, help_text, field_type, options, image_url, page_position, page_title)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          formId,
+          index,
+          question.label,
+          question.helpText || null,
+          fieldType,
+          options,
+          imageUrl,
+          layout.pagePosition,
+          layout.pageTitle,
+        ],
       );
       keptIds.add(Number(inserted.insertId));
     }

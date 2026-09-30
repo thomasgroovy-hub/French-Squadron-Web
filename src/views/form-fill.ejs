@@ -1,12 +1,27 @@
-<a href="/candidatures" class="btn btn-outline btn-sm" style="width: fit-content;">Retour aux candidatures</a>
+<%# Aperçu : le rendu est celui du candidat, mais la page ne contient aucun
+    `<form>`. Il n'existe donc aucun bouton, aucune touche Entrée et aucun script
+    capable de poster quoi que ce soit : la preview est fausse par construction,
+    pas par convention. %>
+<% const isPreview = typeof isPreview !== 'undefined' && isPreview; %>
+<% const fillBackUrl = typeof backUrl !== 'undefined' ? backUrl : '/candidatures'; %>
+<a href="<%= fillBackUrl %>" class="btn btn-outline btn-sm" style="width: fit-content;">Retour aux candidatures</a>
 
 <section class="card" style="margin-top: 1rem;">
-  <p class="eyebrow">Formulaire</p>
+  <p class="eyebrow"><%= isPreview ? 'Aperçu du formulaire' : 'Formulaire' %></p>
   <h1 style="font-size: 1.8rem; margin: 0.35rem 0;"><%= form.title %></h1>
   <% if (form.description) { %>
     <p class="muted" style="margin-top: 0.5rem;"><%= form.description %></p>
   <% } %>
 </section>
+
+<%# Repli : un appelant qui n'a pas découpé le formulaire en pages est traité
+    comme un formulaire d'une page unique, sans titre. %>
+<%
+  const pages = (form.pages && form.pages.length)
+    ? form.pages
+    : [{ position: 0, number: 1, count: 1, title: null, questions: form.questions || [] }];
+  const multiPage = pages.length > 1;
+%>
 
 <%
   const accepted = typeof alreadyAccepted !== 'undefined' ? alreadyAccepted : false;
@@ -14,6 +29,13 @@
 %>
 <% if (error) { %>
   <div class="notice notice-danger" style="margin-top: 1rem;"><%= error %></div>
+<% } %>
+
+<% if (isPreview) { %>
+  <div class="notice notice-warning" style="margin-top: 1rem;">
+    Aperçu : ceci est exactement ce que verra un candidat, mais rien n’est enregistré.
+    Les champs sont là pour la démonstration et ne sont pas envoyés.
+  </div>
 <% } %>
 
 <% if (accepted) { %>
@@ -35,57 +57,185 @@
     </div>
   </section>
 <% } else { %>
-  <form action="/candidatures/<%= form.id %>/reponses" method="post" class="stack" style="margin-top: 1rem;">
-    <% form.questions.forEach((question, index) => { %>
-      <%
-        const raw = answers && answers[String(question.id)];
-        // Un choix multiple est stocké comme un tableau : la vue doit donc lire
-        // les deux formes selon le type de la question.
-        const value = question.fieldType === 'choice_multiple'
-          ? (Array.isArray(raw) ? raw : [])
-          : (Array.isArray(raw) ? (raw[0] || '') : (raw || ''));
-        const options = Array.isArray(question.options) ? question.options : [];
-      %>
-      <section class="card">
-        <div class="question-head">
-          <span class="question-index"><%= index + 1 %></span>
-          <div>
-            <h2 class="question-label"><%= question.label %></h2>
-            <% if (question.helpText) { %>
-              <p class="question-help"><%= question.helpText %></p>
+  <% if (isPreview) { %>
+    <div class="stack" id="form-pages" data-preview="1" style="margin-top: 1rem;">
+  <% } else { %>
+    <form action="/candidatures/<%= form.id %>/reponses" method="post" class="stack" id="form-pages" style="margin-top: 1rem;">
+  <% } %>
+    <%# La numérotation des questions reste globale sur tout le formulaire, même
+        si elle est réinitialisée à chaque page : c'est l'ordre de lecture. %>
+    <% let questionNumber = 0; %>
+    <% pages.forEach((page, pageIndex) => { %>
+      <section class="form-page" data-form-page="<%= pageIndex %>" aria-label="<%= page.title ? page.title : 'Page ' + (pageIndex + 1) %>">
+        <% if (page.title || multiPage) { %>
+          <div class="page-head">
+            <% if (page.title) { %>
+              <h2 class="page-title"><%= page.title %></h2>
+            <% } %>
+            <% if (multiPage) { %>
+              <p class="page-counter">Page <%= pageIndex + 1 %> sur <%= pages.length %></p>
             <% } %>
           </div>
-        </div>
-        <% if (question.fieldType === 'long') { %>
-          <textarea class="field-input" name="answer_<%= question.id %>" rows="6" placeholder="Votre réponse"><%= value %></textarea>
-        <% } else if (question.fieldType === 'date') { %>
-          <input class="field-input" type="date" name="answer_<%= question.id %>" value="<%= value %>">
-        <% } else if (question.fieldType === 'choice_single') { %>
-          <select class="field-input" name="answer_<%= question.id %>" required>
-            <option value="">Choisissez une réponse</option>
-            <% options.forEach((option) => { %>
-              <option value="<%= option %>" <%= value === option ? 'selected' : '' %>><%= option %></option>
-            <% }); %>
-          </select>
-        <% } else if (question.fieldType === 'choice_multiple') { %>
-          <%# Même `name` sur chaque case : le navigateur poste alors un tableau,
-              que le serveur range tel quel dans l'objet answers. %>
-          <ul class="choice-list">
-            <% options.forEach((option) => { %>
-              <li class="choice-item">
-                <input type="checkbox" id="answer_<%= question.id %>-<%= options.indexOf(option) %>" name="answer_<%= question.id %>" value="<%= option %>" <%= value.includes(option) ? 'checked' : '' %>>
-                <label for="answer_<%= question.id %>-<%= options.indexOf(option) %>"><%= option %></label>
-              </li>
-            <% }); %>
-          </ul>
-        <% } else { %>
-          <input class="field-input" type="text" name="answer_<%= question.id %>" value="<%= value %>" placeholder="Votre réponse" maxlength="4000">
         <% } %>
+
+        <div class="stack">
+          <% page.questions.forEach((question) => { %>
+            <%
+              questionNumber += 1;
+              const raw = answers && answers[String(question.id)];
+              // Un choix multiple est stocké comme un tableau : la vue doit donc lire
+              // les deux formes selon le type de la question.
+              const value = question.fieldType === 'choice_multiple'
+                ? (Array.isArray(raw) ? raw : [])
+                : (Array.isArray(raw) ? (raw[0] || '') : (raw || ''));
+              const options = Array.isArray(question.options) ? question.options : [];
+            %>
+            <article class="card">
+              <div class="question-head">
+                <span class="question-index"><%= questionNumber %></span>
+                <div>
+                  <h2 class="question-label"><%= question.label %></h2>
+                  <% if (question.helpText) { %>
+                    <p class="question-help"><%= question.helpText %></p>
+                  <% } %>
+                </div>
+              </div>
+              <%# L'illustration vient du créateur : une URL http(s) validée côté
+                  serveur, jamais une donnée de candidature. %>
+              <% if (question.imageUrl) { %>
+                <img class="question-image" src="<%= question.imageUrl %>" alt="" loading="lazy">
+              <% } %>
+              <% if (question.fieldType === 'long') { %>
+                <textarea class="field-input" name="answer_<%= question.id %>" rows="6" placeholder="Votre réponse"><%= value %></textarea>
+              <% } else if (question.fieldType === 'date') { %>
+                <input class="field-input" type="date" name="answer_<%= question.id %>" value="<%= value %>">
+              <% } else if (question.fieldType === 'choice_single') { %>
+                <select class="field-input" name="answer_<%= question.id %>" <%= isPreview ? '' : 'required' %>>
+                  <option value="">Choisissez une réponse</option>
+                  <% options.forEach((option) => { %>
+                    <option value="<%= option %>" <%= value === option ? 'selected' : '' %>><%= option %></option>
+                  <% }); %>
+                </select>
+              <% } else if (question.fieldType === 'choice_multiple') { %>
+                <%# Même `name` sur chaque case : le navigateur poste alors un tableau,
+                    que le serveur range tel quel dans l'objet answers. %>
+                <ul class="choice-list">
+                  <% options.forEach((option) => { %>
+                    <li class="choice-item">
+                      <input type="checkbox" id="answer_<%= question.id %>-<%= options.indexOf(option) %>" name="answer_<%= question.id %>" value="<%= option %>" <%= value.includes(option) ? 'checked' : '' %>>
+                      <label for="answer_<%= question.id %>-<%= options.indexOf(option) %>"><%= option %></label>
+                    </li>
+                  <% }); %>
+                </ul>
+              <% } else { %>
+                <input class="field-input" type="text" name="answer_<%= question.id %>" value="<%= value %>" placeholder="Votre réponse" maxlength="4000">
+              <% } %>
+            </article>
+          <% }); %>
+
+          <% if (!page.questions.length) { %>
+            <div class="empty-state">
+              <span class="empty-state-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6h13M8 12h13M8 18h13"/></svg>
+              </span>
+              <p>Cette page ne contient aucune question.</p>
+            </div>
+          <% } %>
+        </div>
+
+        <%# Navigation : sans JavaScript, toutes les pages restent visibles et le
+            seul bouton de validation est en bas — le formulaire reste donc
+            remplissable et postable. %>
+        <div class="row-aside page-nav">
+          <% if (pageIndex > 0) { %>
+            <button type="button" class="btn btn-outline page-nav-start" data-page-prev>Page précédente</button>
+          <% } %>
+          <% if (pageIndex < pages.length - 1) { %>
+            <button type="button" class="btn btn-outline" data-page-next>Page suivante</button>
+          <% } else if (isPreview) { %>
+            <button type="button" class="btn btn-discord">Envoyer ma candidature</button>
+          <% } else { %>
+            <button type="submit" class="btn btn-discord">Envoyer ma candidature</button>
+          <% } %>
+        </div>
       </section>
     <% }); %>
-
-    <div class="row-aside" style="justify-content: flex-end;">
-      <button type="submit" class="btn btn-discord">Envoyer ma candidature</button>
+  <% if (isPreview) { %>
     </div>
-  </form>
+  <% } else { %>
+    </form>
+  <% } %>
+
+  <script>
+    /* Pagination : une amélioration, pas une condition d'utilisation. Le script ne
+       s'installe qu'après coup et peut donc masquer les pages sans jamais empêcher
+       l'affichage de l'ensemble du formulaire. */
+    (function () {
+      var root = document.getElementById('form-pages');
+      if (!root) return;
+      var pages = Array.prototype.slice.call(root.querySelectorAll('[data-form-page]'));
+      if (pages.length < 2) return;
+      root.classList.add('js-pages');
+
+      var current = 0;
+
+      function show(index) {
+        current = Math.max(0, Math.min(index, pages.length - 1));
+        pages.forEach(function (page, position) {
+          page.classList.toggle('is-current', position === current);
+        });
+        root.querySelectorAll('[data-page-counter]').forEach(function (label) {
+          label.textContent = String(current + 1);
+        });
+        if (root.scrollIntoView) root.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+
+      /* La validation HTML ne porte que sur la page affichée : au premier envoi,
+         on bascule sur la page fautive avant de laisser le navigateur la signaler,
+         sinon il tenterait de faire le focus sur un champ caché. */
+      function firstInvalidPage() {
+        for (var index = 0; index < pages.length; index += 1) {
+          if (pages[index].querySelector(':invalid')) return index;
+        }
+        return -1;
+      }
+
+      root.addEventListener('click', function (event) {
+        var next = event.target.closest('[data-page-next]');
+        if (next) {
+          event.preventDefault();
+          var invalid = firstInvalidPage();
+          if (invalid !== -1 && invalid < pages.length - 1 && invalid !== current) {
+            // Un champ obligatoire manquant bloque le passage : on montre la page
+            // concernée plutôt que de laisser le candidat aller sur la suivante.
+            show(invalid);
+            var field = pages[invalid].querySelector(':invalid');
+            if (field && field.reportValidity) field.reportValidity();
+            return;
+          }
+          show(current + 1);
+          return;
+        }
+        var previous = event.target.closest('[data-page-prev]');
+        if (previous) {
+          event.preventDefault();
+          show(current - 1);
+        }
+      });
+
+      var form = root.tagName === 'FORM' ? root : null;
+      if (form) {
+        form.addEventListener('submit', function (event) {
+          var invalid = firstInvalidPage();
+          if (invalid === -1) return;
+          event.preventDefault();
+          show(invalid);
+          var field = pages[invalid].querySelector(':invalid');
+          if (field && field.reportValidity) field.reportValidity();
+        });
+      }
+
+      show(0);
+    })();
+  </script>
 <% } %>

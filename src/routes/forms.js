@@ -12,9 +12,13 @@ import { webConfig } from '../config.js';
 import {
   FIELD_TYPES,
   FIELD_TYPE_VALUES,
+  groupQuestionsIntoPages,
   isChoiceFieldType,
   MAX_OPTIONS_PER_QUESTION,
   MAX_OPTION_LENGTH,
+  MAX_PAGES_PER_FORM,
+  MAX_PAGE_TITLE_LENGTH,
+  normalizeImageUrl,
   FORM_STATUS,
   RESPONSE_STATUS,
   countResponsesByCreator,
@@ -54,6 +58,8 @@ const MOVE_DIRECTIONS = Object.freeze({ up: -1, down: 1 });
 
 const STRUCTURAL_NOTICES = Object.freeze({
   add_question: 'Question ajoutée.',
+  add_page: 'Page ajoutée.',
+  remove_page: 'Page supprimée, ses questions ont rejoint la page précédente.',
   remove_question: 'Question supprimée.',
   duplicate_question: 'Question dupliquée.',
   move: 'Ordre mis à jour.',
@@ -155,27 +161,57 @@ async function loadGrantableRoles(fetchFn) {
 /**
  * Reads the parallel question arrays posted by the builder. Row ids are kept so
  * the reorder/remove buttons can address a specific row.
+ *
+ * `question_page[]` says which page each row belongs to, and `page_title[n]`
+ * carries one title per page. The title is copied onto every question of the
+ * page, which is the shape `resolveQuestionPages` expects.
  */
 function parseQuestions(body) {
   const ids = asStringArray(body.question_id);
   const labels = asStringArray(body.question_label);
   const helps = asStringArray(body.question_help);
   const types = asStringArray(body.question_type);
+  const images = asStringArray(body.question_image);
+  const pages = asStringArray(body.question_page);
+  const pageTitles = parsePageTitles(body.page_title);
 
-  const count = Math.max(labels.length, ids.length, helps.length, types.length);
+  const count = Math.max(labels.length, ids.length, helps.length, types.length, images.length, pages.length);
   const optionGroups = parseQuestionOptions(body, count);
   const questions = [];
   for (let index = 0; index < count && questions.length < MAX_QUESTIONS; index += 1) {
     const fieldType = FIELD_TYPE_VALUES.includes(types[index]) ? types[index] : FIELD_TYPES.SHORT;
+    const pagePosition = normalizePagePosition(pages[index]);
     questions.push({
       id: ids[index] || null,
       label: cleanText(labels[index], 200),
       helpText: cleanText(helps[index], 500),
       fieldType,
       options: optionGroups[index] || [],
+      imageUrl: normalizeImageUrl(images[index]),
+      pagePosition,
+      pageTitle: pageTitles[pagePosition] || '',
     });
   }
   return questions;
+}
+
+/** `page_title[n]` arrive dans un objet indexé par des chaînes. */
+function parsePageTitles(value) {
+  if (!value || typeof value !== 'object') return [];
+  const titles = [];
+  for (const [key, entry] of Object.entries(value)) {
+    const index = Number.parseInt(key, 10);
+    if (!Number.isInteger(index) || index < 0) continue;
+    titles[index] = cleanText(entry, MAX_PAGE_TITLE_LENGTH);
+  }
+  return titles;
+}
+
+/** Position de page normalisée : un index absent ou aberrant retombe sur 0. */
+function normalizePagePosition(value) {
+  const index = Number.parseInt(typeof value === 'string' ? value : '', 10);
+  if (!Number.isInteger(index) || index < 0 || index >= MAX_PAGES_PER_FORM) return 0;
+  return index;
 }
 
 /**
@@ -222,6 +258,10 @@ function moveQuestion(questions, questionTarget, direction) {
   if (index === -1) return;
   const target = index + (MOVE_DIRECTIONS[String(direction)] ?? 1);
   if (target < 0 || target >= questions.length) return;
+  // Un déplacement ne franchit pas une frontière de page : la question changerait
+  // de page tout en gardant le titre de l'ancienne, et le formulaire se retrouverait
+  // avec une page ne contenant qu'elle. Le builder désactive déjà ces boutons.
+  if ((questions[target].pagePosition || 0) !== (questions[index].pagePosition || 0)) return;
   [questions[index], questions[target]] = [questions[target], questions[index]];
 }
 
@@ -233,13 +273,98 @@ function moveQuestion(questions, questionTarget, direction) {
  * Returns the mutated list plus the notice key so both the create and the
  * update route can share the exact same behaviour.
  */
+/**
+ * Une page est une portion de questions partageant `pagePosition`. Ajouter une
+ * page revient donc à y placer une question neuve, et en supprimer une revient
+ * à faire rejoindre la page précédente à ses questions : il n'y a pas de ligne
+ * « page » à créer ou à retirer, seulement des questions à regrouper.
+ */
+function countPages(questions) {
+  const positions = new Set(questions.map((question) => question.pagePosition || 0));
+  return Math.max(positions.size, 1);
+}
+
+function removePage(questions, target) {
+  const index = Number.parseInt(String(target ?? '').trim(), 10);
+  if (!Number.isInteger(index) || index < 0) return questions;
+  // Les pages sont identifiées par leur valeur, pas par leur rang : un
+  // questionnaire dont les questions ne sont pas encore toutes remplies peut
+  // avoir des positions non contiguës.
+  const positions = [];
+  for (const question of questions) {
+    const position = question.pagePosition || 0;
+    if (!positions.includes(position)) positions.push(position);
+  }
+  const removed = positions[index];
+  if (removed === undefined) return questions;
+  // La dernière page ne peut pas être supprimée : le formulaire en garderait
+  // zéro, et il n'y aurait plus rien à afficher.
+  const fallback = positions[index - 1] ?? 0;
+  return questions.map((question) => (
+    (question.pagePosition || 0) === removed ? { ...question, pagePosition: fallback } : question
+  ));
+}
+
+/**
+ * Insère une question neuve. `add_question:<pagePosition>` la place à la fin de
+ * la page demandée, `add_question` la laisse à la fin du formulaire.
+ */
+function addQuestionTo(questions, pageTarget) {
+  const question = {
+    id: null,
+    label: '',
+    helpText: '',
+    fieldType: FIELD_TYPES.SHORT,
+    options: [],
+    imageUrl: null,
+    pagePosition: 0,
+    pageTitle: '',
+  };
+  if (pageTarget === null) {
+    questions.push(question);
+    return;
+  }
+  // La liste est plate : insérer après la dernière question de la page suffit à
+  // rattacher la nouvelle à cette page, l'ordre des pages étant celui du POST.
+  let insertAt = -1;
+  questions.forEach((existing, index) => {
+    if ((existing.pagePosition || 0) === pageTarget) insertAt = index;
+  });
+  questions.splice(insertAt + 1, 0, { ...question, pagePosition: pageTarget });
+}
+
 function applyStructuralAction(action, move, questions) {
-  if (action === 'add_question') {
+  if (action === 'add_question' || action.startsWith('add_question:')) {
+    // Une page est délimitée par la valeur `pagePosition` des questions
+    // voisines, pas par son rang : c'est cette valeur que le bouton envoie.
+    const raw = action.slice('add_question'.length).replace(':', '');
+    const pageTarget = raw ? Number.parseInt(raw, 10) : null;
     if (questions.length < MAX_QUESTIONS) {
-      questions.push({ id: null, label: '', helpText: '', fieldType: FIELD_TYPES.SHORT, options: [] });
-      return { questions, notice: 'add_question' };
+      addQuestionTo(questions, Number.isInteger(pageTarget) ? pageTarget : null);
     }
     return { questions, notice: 'add_question' };
+  }
+
+  if (action === 'add_page') {
+    if (questions.length < MAX_QUESTIONS && countPages(questions) < MAX_PAGES_PER_FORM) {
+      const pagePosition = countPages(questions);
+      questions.push({
+        id: null,
+        label: '',
+        helpText: '',
+        fieldType: FIELD_TYPES.SHORT,
+        options: [],
+        imageUrl: null,
+        pagePosition,
+        pageTitle: '',
+      });
+      return { questions, notice: 'add_page' };
+    }
+    return { questions, notice: 'add_page' };
+  }
+
+  if (action.startsWith('remove_page:')) {
+    return { questions: removePage(questions, action.slice('remove_page:'.length)), notice: 'remove_page' };
   }
 
   if (action.startsWith('remove_question:')) {
@@ -261,6 +386,9 @@ function applyStructuralAction(action, move, questions) {
         helpText: source.helpText,
         fieldType: source.fieldType,
         options: [...(source.options || [])],
+        imageUrl: source.imageUrl,
+        pagePosition: source.pagePosition,
+        pageTitle: source.pageTitle,
       });
     }
     return { questions, notice: 'duplicate_question' };
@@ -288,6 +416,9 @@ function toStoredQuestions(questions) {
     helpText: question.helpText,
     fieldType: question.fieldType,
     options: isChoiceFieldType(question.fieldType) ? (question.options || []) : [],
+    imageUrl: question.imageUrl || null,
+    pagePosition: question.pagePosition || 0,
+    pageTitle: question.pageTitle || '',
   }));
 }
 
@@ -300,7 +431,16 @@ function emptyDraftForm() {
     grantedRoleId: null,
     status: FORM_STATUS.DRAFT,
     statusLabel: FORM_STATUS_LABELS[FORM_STATUS.DRAFT],
-    questions: [{ id: null, label: '', helpText: '', fieldType: FIELD_TYPES.SHORT, options: [] }],
+    questions: [{
+      id: null,
+      label: '',
+      helpText: '',
+      fieldType: FIELD_TYPES.SHORT,
+      options: [],
+      imageUrl: null,
+      pagePosition: 0,
+      pageTitle: '',
+    }],
   };
 }
 
@@ -322,15 +462,19 @@ const GOOGLE_FORM_TYPE_MAP = Object.freeze({
 });
 
 /**
- * Codes de Google qui ne sont pas des questions mais des éléments de mise en
- * page : ils portent un titre mais aucun champ à remplir, donc on les saute au
- * lieu de les importer en texte libre.
+ * Codes de Google qui ne sont pas des questions.
+ *
+ * 6 (image) et 8 (titre de section) ne demandent pas de réponse mais ne sont pas
+ * pour autant jetés : une image est rattachée à la question qui la suit, et un
+ * titre de section ouvre une page — exactement la structure qu'un formulaire
+ * Google utilise pour découper ses pages. 7 (vidéo) reste ignoré, faute de
+ * champ vidéo côté candidat.
  */
-const GOOGLE_FORM_NON_QUESTION_TYPES = new Set([
-  6, // Image
-  7, // Vidéo
-  8, // Titre de section
-]);
+const GOOGLE_FORM_IMAGE_TYPE = 6;
+const GOOGLE_FORM_SECTION_TYPE = 8;
+
+/** Extensions retenues pour une image : le CDN Google sert surtout du PNG/JPEG. */
+const GOOGLE_FORM_IMAGE_PATTERN = /^https?:\/\/\S+\.(?:png|jpe?g|gif|webp)(?:\?\S*)?$/i;
 
 const GOOGLE_FORM_IMPORT_WARNING = 'Import ponctuel : les futures modifications du Google Form ne seront pas répercutées ici.';
 
@@ -463,20 +607,45 @@ function extractGoogleFormLoadData(html) {
  * chaque item est un tableau `[id, libellé, description, type, validation…]`. Les
  * pages plus anciennes servaient des objets à clés numériques, encore gérés ici
  * pour ne pas casser un formulaire déjà en cache.
+ *
+ * Les pages du Google Form sont reconstruites telles quelles : chaque titre de
+ * section ouvre une page, et le contenu qui le précède forme la première. Un
+ * Google Form sans section reste donc une page unique, comme avant.
  */
 function normalizeGoogleFormQuestions(loadData) {
   const { title, description } = readGoogleFormMeta(loadData);
   const items = findGoogleFormItems(loadData);
   const questions = [];
+  let pagePosition = 0;
+  let pageTitle = '';
+  // Une image Google est un objet à part entière : elle est conservée le temps de
+  // rencontrer la question suivante, à laquelle elle sert d'illustration.
+  let pendingImageUrl = null;
+
   for (const item of items) {
     if (!looksLikeGoogleFormItem(item)) continue;
-    // Une section ou une image n'a pas de champ à remplir.
-    if (GOOGLE_FORM_NON_QUESTION_TYPES.has(googleItemType(item))) continue;
-    const label = cleanText(googleItemLabel(item), 200);
-    if (!label) continue;
-    const fieldType = GOOGLE_FORM_TYPE_MAP[googleItemType(item)] ?? FIELD_TYPES.SHORT;
+    const itemType = googleItemType(item);
+
+    if (itemType === GOOGLE_FORM_SECTION_TYPE) {
+      if (pagePosition + 1 >= MAX_PAGES_PER_FORM) continue;
+      const sectionTitle = cleanText(googleItemLabel(item), MAX_PAGE_TITLE_LENGTH);
+      pagePosition += 1;
+      pageTitle = sectionTitle;
+      continue;
+    }
+
+    if (itemType === GOOGLE_FORM_IMAGE_TYPE) {
+      if (!pendingImageUrl) pendingImageUrl = googleItemImageUrl(item);
+      continue;
+    }
+
+    // Type 7 (vidéo) et tout code inconnu : rien à faire tant qu'aucun type
+    // équivalent n'existe côté candidat.
+    const fieldType = GOOGLE_FORM_TYPE_MAP[itemType] ?? FIELD_TYPES.SHORT;
     const isChoice = isChoiceFieldType(fieldType);
     const options = isChoice ? googleItemOptions(item) : [];
+    const label = cleanText(googleItemLabel(item), 200);
+    if (!label) continue;
     questions.push({
       id: null,
       label,
@@ -485,11 +654,41 @@ function normalizeGoogleFormQuestions(loadData) {
       // sur un texte libre en gardant le libellé d'origine.
       fieldType: isChoice && !options.length ? FIELD_TYPES.SHORT : fieldType,
       options,
+      imageUrl: pendingImageUrl,
+      pagePosition,
+      pageTitle,
     });
+    pendingImageUrl = null;
     if (questions.length >= MAX_QUESTIONS) break;
   }
 
   return { title, description, questions };
+}
+
+/**
+ * Cherche l'image d'un item Google.
+ *
+ * Google ne publie pas l'URL à une position fixe : elle est imbriquée selon la
+ * version. On parcourt donc la structure et on retient la première URL qui
+ * ressemble à une image, en bornant la profondeur pour ne pas descendre dans
+ * une chaîne sans rapport.
+ */
+function googleItemImageUrl(item) {
+  const found = findGoogleImageUrl(item, 0);
+  return found ? normalizeImageUrl(found) : null;
+}
+
+function findGoogleImageUrl(node, depth) {
+  if (node == null || depth > 6) return null;
+  if (typeof node === 'string') {
+    return GOOGLE_FORM_IMAGE_PATTERN.test(node.trim()) ? node.trim() : null;
+  }
+  const children = Array.isArray(node) ? node : (typeof node === 'object' ? Object.values(node) : []);
+  for (const child of children) {
+    const found = findGoogleImageUrl(child, depth + 1);
+    if (found) return found;
+  }
+  return null;
 }
 
 /** Titre et description, lus à leur place puis repris depuis l'ancien format. */
@@ -579,9 +778,9 @@ function googleItemHelp(item) {
  *
  * Aujourd'hui Google les range dans la validation : `item[4][0][1]`, chaque
  * option étant `["Texte", …, drapeau]`. L'ancien format les mettait
- * directement dans `item[4]`. On reconnaît la bonne liste par le type de ses
- * entrées, sinon un identifiant d'entrée (`[246314205, null, 1]`) finirait
- * importé comme une option.
+ * directement dans `item[4]`. On reconnaît la bonne liste par la présence
+ * d'options lisibles, sinon un identifiant d'entrée (`[246314205, null, 1]`)
+ * finirait importé comme une option.
  */
 function googleItemOptions(item) {
   const validation = item?.[4];
@@ -593,21 +792,37 @@ function googleItemOptions(item) {
 
   const options = [];
   for (const entry of raw) {
-    // Le drapeau final vaut 1 sur l'option « Autre », dont le libellé est vide
-    // côté page : on la rebaptise pour ne pas la perdre.
-    const isGoogleOtherOption = Array.isArray(entry) && entry[entry.length - 1] === 1;
-    const text = firstGoogleText(Array.isArray(entry) ? entry[0] : entry).trim();
-    if (text) options.push(text.slice(0, MAX_OPTION_LENGTH));
-    else if (isGoogleOtherOption) options.push('Autre');
+    const option = googleOptionText(entry);
+    if (!option || options.includes(option)) continue;
+    options.push(option);
+    if (options.length >= MAX_OPTIONS_PER_QUESTION) break;
   }
-  return [...new Set(options)].slice(0, MAX_OPTIONS_PER_QUESTION);
+  return options;
 }
 
-/** Une liste d'options ne contient que des textes, jamais d'identifiants. */
+/**
+ * Texte d'une option, ou `null` si l'entrée n'en porte pas.
+ *
+ * `firstGoogleText` descend dans les tableaux imbriqués, ce qui couvre les
+ * formats ancien et actuel d'un seul coup : une option dont le texte a gagné un
+ * niveau d'imbrication est lue au lieu d'être rejetée — et c'est ce rejet, trop
+ * strict, qui faisait retomber un QCM entier en texte libre. En revanche une
+ * entrée d'identifiant numérique ne contient aucune chaîne, donc reste écartée.
+ */
+function googleOptionText(entry) {
+  const text = firstGoogleText(Array.isArray(entry) ? entry[0] : entry).trim();
+  if (text) return text.slice(0, MAX_OPTION_LENGTH);
+  // Le drapeau final vaut 1 sur l'option « Autre », dont le libellé est vide
+  // côté page : on la rebaptise pour ne pas la perdre.
+  if (Array.isArray(entry) && entry[entry.length - 1] === 1) return 'Autre';
+  return null;
+}
+
+/** Une liste d'options contient au moins un texte, jamais que des identifiants. */
 function isGoogleOptionList(value) {
   return Array.isArray(value)
     && value.length > 0
-    && value.every((entry) => (Array.isArray(entry) ? typeof entry[0] === 'string' : typeof entry === 'string'));
+    && value.some((entry) => googleOptionText(entry) !== null);
 }
 
 function describeForm(form) {
@@ -616,6 +831,22 @@ function describeForm(form) {
     statusLabel: FORM_STATUS_LABELS[form.status] || form.status,
     createdLabel: formatDate(new Date(form.createdAt)),
   };
+}
+
+/**
+ * Ajoute le découpage en pages à un formulaire dont les questions sont en mémoire
+ * (brouillon du builder, formulaire relu depuis la base).
+ *
+ * `groupQuestionsIntoPages` rend toujours au moins une page, y compris pour une
+ * liste vide : le builder et l'aperçu ont ainsi la même coquille à afficher.
+ */
+function withPages(form) {
+  return { ...form, pages: groupQuestionsIntoPages(form?.questions || []) };
+}
+
+/** Un formulaire chargé de la base, décrit et découpé en pages. */
+function describeFormWithLayout(form) {
+  return withPages(describeForm(form));
 }
 
 /**
@@ -664,7 +895,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
     if (parsed.error) {
       return res.status(400).render('form-builder', {
         title: 'Nouveau formulaire | Candidatures',
-        form: emptyDraftForm(),
+        form: withPages(emptyDraftForm()),
         grantableRoles,
         rolesLoadError,
         isNew: true,
@@ -678,7 +909,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
 
     return res.status(200).render('form-builder', {
       title: 'Nouveau formulaire | Candidatures',
-      form: {
+      form: withPages({
         id: null,
         title: parsed.title,
         description: parsed.description,
@@ -686,7 +917,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         status: FORM_STATUS.DRAFT,
         statusLabel: FORM_STATUS_LABELS[FORM_STATUS.DRAFT],
         questions: parsed.questions,
-      },
+      }),
       grantableRoles,
       rolesLoadError,
       isNew: true,
@@ -850,15 +1081,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
       const { roles: grantableRoles, error: rolesLoadError } = await loadGrantableRoles(fetchFn);
       res.render('form-builder', {
         title: 'Nouveau formulaire | Candidatures',
-        form: {
-          id: null,
-          title: '',
-          description: '',
-          grantedRoleId: null,
-          status: FORM_STATUS.DRAFT,
-          statusLabel: FORM_STATUS_LABELS[FORM_STATUS.DRAFT],
-          questions: emptyDraftForm().questions,
-        },
+        form: withPages(emptyDraftForm()),
         grantableRoles,
         rolesLoadError,
         isNew: true,
@@ -890,7 +1113,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
       const { roles: grantableRoles, error: rolesLoadError } = await loadGrantableRoles(fetchFn);
       return res.status(error ? 400 : 200).render('form-builder', {
         title: 'Nouveau formulaire | Candidatures',
-        form: {
+        form: withPages({
           id: null,
           title,
           description,
@@ -898,7 +1121,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
           status: FORM_STATUS.DRAFT,
           statusLabel: FORM_STATUS_LABELS[FORM_STATUS.DRAFT],
           questions,
-        },
+        }),
         grantableRoles,
         rolesLoadError,
         isNew: true,
@@ -970,10 +1193,8 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         fetchGuildRoleNames({ fetchFn }),
         isAdminView ? fetchSiteUsersByIds([form.creatorDiscordId], pool) : Promise.resolve(new Map()),
       ]);
-      const formView = {
-        ...describeForm(form),
-        grantedRoleName: form.grantedRoleId ? (roleNames.get(form.grantedRoleId) || null) : null,
-      };
+      const formView = describeFormWithLayout(form);
+      formView.grantedRoleName = form.grantedRoleId ? (roleNames.get(form.grantedRoleId) || null) : null;
 
       if (canManageForm(req, form)) {
         // The publication cooldown is a per-creator anti-spam rule. It is
@@ -991,6 +1212,9 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
           rolesLoadError: roleLoad.error,
           isNew: false,
           isAdminView,
+          // Un administrateur qui ouvre un formulaire d'autrui doit revenir à
+          // l'onglet Administration, pas à la liste de ses propres candidatures.
+          backTo: isAdminView ? '/administration/formulaires' : '/candidatures',
           formCreator: isAdminView ? describeIdentity(creators.get(form.creatorDiscordId), form.creatorDiscordId) : null,
           error: null,
           notice: cleanText(req.query.enregistre, 200) || null,
@@ -1032,6 +1256,57 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
       return res.status(500).render('error', {
         title: 'Erreur',
         message: 'Impossible de charger ce formulaire. Veuillez réessayer plus tard.',
+      });
+    }
+  });
+
+  /**
+   * Aperçu : exactement le rendu que verra le candidat, mais sans formulaire
+   * postable et sans aucune écriture.
+   *
+   * Réservé à ceux qui peuvent gérer le formulaire (créateur ou rôle
+   * d'administration) : c'est un outil de relecture, pas un canal de soumission.
+   * Le gabarit rend un `<div>` au lieu d'un `<form>`, il n'y a donc aucun moyen de
+   * poster depuis cette page, et aucune ligne n'est écrite quel que soit le
+   * bouton pressé. Un brouillon reste consultable : c'est justement là que la
+   * relecture est la plus utile.
+   */
+  router.get('/:formId/apercu', async (req, res) => {
+    const formId = Number.parseInt(req.params.formId, 10);
+    try {
+      const form = await getFormById(formId, pool);
+      if (!form) {
+        return res.status(404).render('error', {
+          title: 'Formulaire introuvable',
+          message: 'Ce formulaire n’existe pas ou a été supprimé.',
+        });
+      }
+      if (!canManageForm(req, form)) {
+        return res.status(403).render('error', {
+          title: 'Aperçu réservé',
+          message: 'Seuls le créateur du formulaire et les rôles d’administration peuvent le prévisualiser.',
+        });
+      }
+
+      const roleNames = await fetchGuildRoleNames({ fetchFn });
+      return res.render('form-fill', {
+        title: `Aperçu · ${form.title} | Candidatures`,
+        form: {
+          ...describeFormWithLayout(form),
+          grantedRoleName: form.grantedRoleId ? (roleNames.get(form.grantedRoleId) || null) : null,
+        },
+        answers: {},
+        alreadySubmitted: false,
+        alreadyAccepted: false,
+        isPreview: true,
+        backUrl: `/candidatures/${form.id}`,
+        error: null,
+      });
+    } catch (error) {
+      console.error('[WebRoutes] Error loading the form preview:', error);
+      return res.status(500).render('error', {
+        title: 'Erreur',
+        message: 'Impossible d’afficher l’aperçu de ce formulaire.',
       });
     }
   });
@@ -1080,11 +1355,19 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         ]);
         return res.status(400).render('form-builder', {
           title: `${existing.title} | Candidatures`,
-          form: { ...describeForm(existing), title, description, grantedRoleId, questions },
+          form: withPages({
+            ...describeForm(existing),
+            title,
+            description,
+            grantedRoleId,
+            grantedRoleName: existing.grantedRoleId ? (existing.grantedRoleName || null) : null,
+            questions,
+          }),
           grantableRoles: roleLoad.roles,
           rolesLoadError: roleLoad.error,
           isNew: false,
           isAdminView,
+          backTo: isAdminView ? '/administration/formulaires' : '/candidatures',
           formCreator: isAdminView
             ? describeIdentity(creatorIdentity.get(existing.creatorDiscordId), existing.creatorDiscordId)
             : null,
