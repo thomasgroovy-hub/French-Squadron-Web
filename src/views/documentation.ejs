@@ -1,241 +1,41 @@
-<%# Icônes des trois cartes, dans le même trait que celles du dashboard. %>
+<%# Filigranes des trois cartes : dessins au trait, choisis via `card.key`. Très
+    sombres et volontairement plus grands que la carte, ils débordent des bords
+    et ne doivent jamais lire comme une icône. %>
 <%
-  const cardIcons = {
-    ethics: '<path d="M12 4.2 5.5 6.4v5c0 4 2.7 7.3 6.5 8.4 3.8-1.1 6.5-4.4 6.5-8.4v-5z"/><path d="M9.4 12.1l1.9 1.9 3.4-3.6"/>',
-    facility: '<path d="M6 4.5h9l3.5 3.5V20H6z"/><path d="M15 4.5V8h3.5M9 12.5h6M9 16h6"/>',
-    discord: '<path d="M8.5 8.2A7 7 0 0 1 12 7.7a7 7 0 0 1 3.5.5"/><path d="M6.5 5.5 5.2 16a9 9 0 0 0 13.6 0l-1.3-10.5z"/><circle cx="10" cy="13.2" r="1"/><circle cx="14.4" cy="13.2" r="1"/><path d="M9.6 17.4c1.6.8 3.2.8 4.8 0"/>',
+  const cardArtwork = {
+    ethics: '<circle cx="80" cy="28" r="6"/><path d="M80 34v96"/><path d="M52 130h56"/><path d="M36 52h88"/><path d="M36 52 22 94"/><path d="M36 52 50 94"/><path d="M22 94a14 14 0 0 0 28 0"/><path d="M124 52 110 94"/><path d="M124 52 138 94"/><path d="M110 94a14 14 0 0 0 28 0"/>',
+    facility: '<path d="M80 48C65 38 43 35 22 39v70c21-4 43-1 58 9 15-10 37-13 58-9V39c-21-4-43-1-58 9z"/><path d="M80 48v70"/><path d="M36 60c9-1 18 0 27 3"/><path d="M36 76c9-1 18 0 27 3"/><path d="M36 92c9-1 18 0 27 3"/><path d="M97 63c9 3 18 4 27 3"/><path d="M97 79c9 3 18 4 27 3"/><path d="M97 95c9 3 18 4 27 3"/>',
+    discord: '<path d="M80 16 40 104h80z"/><path d="M61 66h38"/><path d="M26 104h108l8 16H18z"/>',
   };
 %>
 
-<style>
-  /* Documentation modal restyling - uses existing CSS variables from dark theme */
-  .doc-modal {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 520px;
-    max-width: 90vw;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 20px;
-    z-index: 1000;
-    color: var(--text-main);
-    outline: none;
-  }
+<%# Voile sombre + flou : la page reste visible dessous, la modale reste nette. %>
+<div class="doc-overlay" aria-hidden="true"></div>
 
-  .doc-modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(9, 9, 11, 0.8);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    z-index: 999;
-    cursor: default;
-  }
+<section class="doc-panel" aria-labelledby="doc-title">
+  <a class="doc-close" href="/" aria-label="Fermer la documentation">
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6 6l12 12M18 6 6 18"/></svg>
+  </a>
 
-  .doc-modal-content {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    min-height: 440px;
-  }
+  <header class="doc-head">
+    <p class="eyebrow">Documentation</p>
+    <h1 id="doc-title">Documentation de l’escadrille</h1>
+    <p class="muted">Textes de référence et contacts de la Fondation.</p>
+  </header>
 
-  .doc-modal-close {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    width: 22px;
-    height: 22px;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 50%;
-    color: var(--text-muted);
-    cursor: pointer;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    line-height: 1;
-    transition: background 0.15s, border-color 0.15s;
-  }
-
-  .doc-modal-close:hover {
-    background: var(--bg-subtle);
-    border-color: var(--border-strong);
-    color: var(--text-main);
-  }
-
-  .doc-modal-close:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  .doc-modal-title {
-    font-family: "Space Grotesk", "DM Sans", sans-serif;
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: 0;
-    margin: 0;
-    line-height: 1.1;
-  }
-
-  .doc-modal-subtitle {
-    font-size: 13px;
-    color: var(--text-muted);
-    margin: 0;
-    line-height: 1.4;
-  }
-
-  .doc-grid {
-    display: grid;
-    gap: 12px;
-  }
-
-  .doc-card {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 18px 20px;
-    height: 120px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    transition: border-color 0.15s, background 0.15s;
-  }
-
-  .doc-card:hover {
-    border-color: var(--border-strong);
-    background: var(--bg-pill);
-  }
-
-  .doc-card-icon {
-    width: 20px;
-    height: 20px;
-    display: grid;
-    place-items: center;
-    margin-bottom: 8px;
-    align-self: flex-start;
-  }
-
-  .doc-card-icon svg {
-    width: 18px;
-    height: 18px;
-  }
-
-  .doc-card-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .doc-card-title {
-    font-family: "Space Grotesk", "DM Sans", sans-serif;
-    font-size: 17px;
-    font-weight: 700;
-    letter-spacing: 0;
-    margin: 0;
-    line-height: 1.2;
-    color: var(--text-main);
-  }
-
-  .doc-card-sub {
-    font-size: 12px;
-    color: var(--text-muted);
-    margin: 0;
-    line-height: 1.4;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .doc-card-arrow {
-    align-self: flex-end;
-    width: 16px;
-    height: 16px;
-    display: grid;
-    place-items: center;
-  }
-
-  .doc-card-arrow svg {
-    width: 16px;
-    height: 16px;
-    color: var(--text-muted);
-  }
-</style>
-
-<!-- Documentation modal -->
-<section class="doc-modal">
-  <div class="doc-modal-overlay"></div>
-  <div class="doc-modal-content">
-    <button class="doc-modal-close" aria-label="Fermer la documentation" role="button"></button>
-    <h1 class="doc-modal-title">Documentation de l'escadrille</h1>
-    <p class="doc-modal-subtitle">Textes de référence et contacts de la Fondation.</p>
-
-    <div class="doc-grid">
-      <% cards.forEach((card) => { %>
-        <a class="doc-card shortcut" aria-label="Documentation <%= card.title %>" target="_blank" rel="noopener noreferrer">
-          <span class="doc-card-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><%- cardIcons[card.key] || cardIcons.facility %></svg>
-          </span>
-          <div class="doc-card-content">
-            <h2 class="doc-card-title"><%= card.title %></h2>
-            <p class="doc-card-sub"><%= card.description %></p>
-          </div>
-          <svg aria-hidden="true" class="doc-card-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="16" height="16"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-        </a>
-      <% }) %>
-    </div>
+  <div class="doc-grid">
+    <% cards.forEach((card) => { %>
+      <%# `url` est déjà validée et normalisée par la configuration serveur ;
+          l'échappement EJS suffit à la tenir dans l'attribut. Sans URL, la carte
+          reste lisible mais cesse d'être un lien (ancre sans href). %>
+      <a class="card shortcut"<% if (card.url) { %> href="<%= card.url %>" target="_blank" rel="noopener noreferrer"<% } else { %> aria-disabled="true"<% } %>>
+        <div>
+          <h2><%= card.title %></h2>
+          <p class="muted"><%= card.description %></p>
+        </div>
+        <svg class="doc-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="20" height="20"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        <span class="doc-art" data-art="<%= card.key %>" aria-hidden="true"><svg viewBox="0 0 160 160" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><%- cardArtwork[card.key] || cardArtwork.facility %></svg></span>
+      </a>
+    <% }) %>
   </div>
 </section>
-
-<script>
-  // Modal initialization
-  document.addEventListener('DOMContentLoaded', function() {
-    var modal = document.querySelector('.doc-modal');
-    var overlay = document.querySelector('.doc-modal-overlay');
-    var closeBtn = document.querySelector('.doc-modal-close');
-
-    if (!modal) return;
-
-    function openModal() {
-      modal.setAttribute('aria-hidden', 'false');
-      overlay.setAttribute('aria-hidden', 'false');
-      document.body.style.overflow = 'hidden';
-    }
-
-    function closeModal() {
-      modal.setAttribute('aria-hidden', 'true');
-      overlay.setAttribute('aria-hidden', 'true');
-      document.body.style.overflow = '';
-    }
-
-    // Open on load if page is /documentation
-    if (window.location.pathname === '/documentation' || window.location.pathname === '') {
-      openModal();
-    }
-
-    // Close on escape key
-    document.addEventListener('keydown', function(event) {
-      if (event.key === 'Escape' && !modal.hasAttribute('aria-hidden')) {
-        closeModal();
-      }
-    });
-
-    // Close on overlay click
-    overlay.addEventListener('click', function() {
-      closeModal();
-    });
-
-    // Close on close button
-    if (closeBtn) {
-      closeBtn.addEventListener('click', closeModal);
-    }
-  });
-</script>

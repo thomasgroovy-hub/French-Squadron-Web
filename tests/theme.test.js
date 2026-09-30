@@ -221,10 +221,13 @@ const declared = new Set(['#f7f7f8', '#ffffff', '#e5e7eb', '#d1d5db', '#111827',
   '#E53E3E', '#3A1C1C', '#E5A00F', '#362A10', '#22C55E', '#102C1E',
   '#526d68', '#62857c', '#fff'
 ]);
+      // La comparaison ignore la casse : la palette sombre est écrite en
+      // majuscules, le littéral trouvé dans le HTML est normalisé en minuscules.
+      const allowed = new Set([...declared].map((hex) => hex.toLowerCase()));
 
       const hardcoded = [...head.matchAll(/(?:background|background-color|color)\s*:\s*(#[0-9a-f]{3,8})/gi)]
         .map((m) => m[1].toLowerCase())
-        .filter((hex) => !declared.has(hex));
+        .filter((hex) => !allowed.has(hex));
 
       assert.deepEqual(hardcoded, [], `${label} (${path}) contient des couleurs en dur: ${hardcoded.join(', ')}`);
     }

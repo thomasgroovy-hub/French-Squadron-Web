@@ -42,6 +42,14 @@
       --radius: 12px;
       --radius-sm: 10px;
       --shadow: 0 1px 2px rgba(17, 24, 39, 0.04), 0 4px 14px rgba(17, 24, 39, 0.05);
+      /* La documentation est une modale : elle garde son propre quasi-noir dans
+         les deux thèmes, sinon elle ne ressemblerait plus à la référence. */
+      --doc-panel: #09090B;
+      --doc-card: #18181B;
+      --doc-card-border: #303035;
+      --doc-art: #252529;
+      --doc-text: #F4F4F5;
+      --doc-muted: #A1A1AA;
       --hero-ring: rgba(17, 24, 39, 0.06);
       --hero-ring-glow: rgba(17, 24, 39, 0.02);
       --theme-color: #f7f7f8;
@@ -58,8 +66,8 @@
       --border-strong: #3F3F46;
       --text-main: #F4F4F5;
       --text-muted: #A1A1AA;
-      --accent: #71717A;
-      --accent-hover: #52525B;
+      --accent: #8A8A93;
+      --accent-hover: #A1A1AA;
       --danger: #E53E3E;
       --danger-bg: #3A1C1C;
       --warning: #E5A00F;
@@ -67,6 +75,12 @@
       --success: #22C55E;
       --success-bg: #102C1E;
       --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 14px rgba(0, 0, 0, 0.3);
+      --doc-panel: #09090B;
+      --doc-card: #18181B;
+      --doc-card-border: #303035;
+      --doc-art: #252529;
+      --doc-text: #F4F4F5;
+      --doc-muted: #A1A1AA;
       --hero-ring: rgba(232, 234, 237, 0.07);
       --hero-ring-glow: rgba(232, 234, 237, 0.025);
       --theme-color: #09090B;
@@ -433,12 +447,37 @@
     .detail-list dt { color: var(--text-muted); font-size: 0.8rem; font-weight: 600; }
     .detail-list dd { margin: 0; font-size: 0.88rem; text-align: right; }
 
-    /* Documentation : trois liens de référence, habillés comme les raccourcis
-       du dashboard. Seule la grille est nouvelle, le reste est réutilisé. */
-    .doc-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1.2rem; }
+    /* Documentation : la page se lit comme une modale compacte posée sur le site
+       flouté. Le voile, le panneau et la grille sont propres à cette page ; les
+       cartes réutilisent `.card`/`.shortcut` de l'accueil, surchargés ici. */
+    .doc-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(9, 9, 11, 0.82); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+    .doc-panel { position: fixed; z-index: 201; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(520px, 92vw); max-height: calc(100vh - 2.5rem); overflow-y: auto; padding: 21px; background: var(--doc-panel); border: 1px solid var(--doc-card-border); border-radius: 13px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45); }
+    .doc-close { position: absolute; top: 16px; right: 16px; width: 23px; height: 23px; display: grid; place-items: center; border: 1px solid var(--doc-card-border); border-radius: 5px; color: var(--doc-muted); transition: border-color 0.15s ease, color 0.15s ease; }
+    .doc-close:hover { color: var(--doc-text); border-color: var(--doc-muted); text-decoration: none; }
+    .doc-close:focus-visible { outline: 2px solid var(--doc-muted); outline-offset: 2px; }
+    .doc-close svg { width: 13px; height: 13px; }
+    .doc-head .eyebrow { font-size: 0.7rem; }
+    .doc-head h1 { margin: 6px 0 4px; font-size: 17.5px; line-height: 1.2; color: var(--doc-text); }
+    .doc-head .muted { margin: 0; font-size: 12.5px; color: var(--doc-muted); }
+
+    .doc-grid { display: grid; gap: 12px; margin-top: 18px; }
+    .doc-grid .shortcut { position: relative; overflow: hidden; min-height: 124px; align-items: center; padding: 14px 104px 14px 22px; background: var(--doc-card); border-color: var(--doc-card-border); border-radius: 10.5px; box-shadow: none; }
+    .doc-grid .shortcut:hover { border-color: var(--doc-muted); transform: none; }
+    .doc-grid .shortcut > div { position: relative; z-index: 1; }
+    .doc-grid .shortcut h2 { margin: 0 0 5px; font-size: 16.5px; line-height: 1.2; color: var(--doc-text); }
+    .doc-grid .shortcut p { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--doc-muted); }
+    /* La flèche reste en haut à droite, alignée sur les trois cartes. */
+    .doc-grid .doc-arrow { position: absolute; top: 15px; right: 19px; width: 17px; height: 17px; color: var(--doc-muted); }
+    /* Filigranes : débordent de la carte, décoratifs, jamais cliquables. */
+    .doc-grid .doc-art { position: absolute; z-index: 0; display: block; color: var(--doc-art); pointer-events: none; }
+    .doc-grid .doc-art svg { width: 100%; height: 100%; }
+    .doc-grid [data-art="ethics"] { top: -8px; right: -30px; width: 132px; height: 132px; }
+    .doc-grid [data-art="facility"] { right: -34px; bottom: -40px; width: 150px; height: 150px; }
+    .doc-grid [data-art="discord"] { right: -22px; bottom: -28px; width: 116px; height: 132px; }
     /* Carte sans URL configurée : lisible, mais plus cliquable. */
     .shortcut[aria-disabled="true"] { cursor: not-allowed; opacity: 0.55; }
     .shortcut[aria-disabled="true"]:hover { border-color: var(--border); transform: none; }
+    .doc-grid .shortcut[aria-disabled="true"]:hover { border-color: var(--doc-card-border); }
 
     .empty-state { display: grid; justify-items: center; gap: 0.6rem; padding: 1.75rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-card); text-align: center; }
     .empty-state-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: var(--bg-pill); color: var(--text-muted); }
@@ -472,7 +511,11 @@
       .hero-avatar { width: 58px; height: 58px; }
       .hero-title { font-size: 1.65rem; }
       .dashboard-grid { grid-template-columns: 1fr; }
-      .doc-grid { grid-template-columns: 1fr; }
+      .doc-panel { width: calc(100vw - 1.5rem); padding: 18px; }
+      .doc-grid .shortcut { padding-right: 78px; }
+      .doc-grid [data-art="ethics"] { width: 108px; height: 108px; }
+      .doc-grid [data-art="facility"] { width: 122px; height: 122px; }
+      .doc-grid [data-art="discord"] { width: 96px; height: 110px; }
       .member-tools { flex-wrap: wrap; }
     }
     /* Gestion des avertissements (comité d'éthique) */
