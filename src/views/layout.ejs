@@ -115,6 +115,13 @@
       --success: #ffa8c4;
       --success-bg: #4a2130;
       --shadow: 0 1px 2px rgba(61, 15, 26, 0.4), 0 4px 14px rgba(61, 15, 26, 0.35);
+      /* La documentation suit le thème actif, easter egg rose compris. */
+      --doc-panel: #2a141c;
+      --doc-card: #3d1d26;
+      --doc-card-border: #5c2f3d;
+      --doc-art: #4a2531;
+      --doc-text: #ffeef4;
+      --doc-muted: #d9a7b9;
       --hero-ring: rgba(255, 158, 187, 0.12);
       --hero-ring-glow: rgba(255, 158, 187, 0.04);
       --theme-color: #2a141c;
@@ -470,8 +477,11 @@
     .doc-grid .doc-arrow { position: absolute; top: 15px; right: 19px; width: 17px; height: 17px; color: var(--doc-muted); }
     /* Panneaux de la carte : PNG débordant des bords, décoratifs, jamais
        cliquables. `grayscale` + `opacity` les ramènent au ton du filigrane,
-       quelle que soit la couleur du fichier d'origine. */
-    .doc-grid .doc-art { position: absolute; z-index: 0; display: block; pointer-events: none; object-fit: contain; filter: grayscale(1); opacity: 0.08; transition: opacity 0.15s ease; }
+       quelle que soit la couleur du fichier d'origine.
+       `will-change` isole le bitmap sur sa propre couche : le survol anime
+       alors son opacité sur le compositeur, sans re-filtrer ni re-peindre un
+       PNG 4x plus grand que la boîte à chaque image de la transition. */
+    .doc-grid .doc-art { position: absolute; z-index: 0; display: block; pointer-events: none; object-fit: contain; filter: grayscale(1); opacity: 0.08; transition: opacity 0.15s ease; will-change: opacity, filter; }
     .doc-grid [data-art="ethics"] { top: -8px; right: -30px; width: 132px; height: 132px; }
     .doc-grid [data-art="facility"] { right: -34px; bottom: -40px; width: 150px; height: 150px; }
     .doc-grid [data-art="discord"] { right: -22px; bottom: -28px; width: 116px; height: 132px; }
