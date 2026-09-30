@@ -136,20 +136,18 @@
     <div class="stack" id="question-list">
       <% pages.forEach((page, pageIndex) => { %>
         <section class="page-block" data-page-block>
-          <header class="page-legend">Page <%= page.number %> sur <%= pages.length %></header>
+          <header class="page-legend">
+            <span>Page <%= page.number %> sur <%= pages.length %></span>
+            <div class="row-aside">
+              <% if (pages.length > 1) { %>
+                <button type="submit" name="action" value="remove_page:<%= pageIndex %>" class="btn btn-ghost-danger btn-xs" title="Supprimer cette page (les questions rejoignent la page précédente)">Supprimer la page</button>
+              <% } %>
+            </div>
+          </header>
 
           <div class="field-block">
             <label class="field-label" for="page-title-<%= pageIndex %>">Titre de la page</label>
             <input class="field-input" id="page-title-<%= pageIndex %>" type="text" name="page_title[<%= pageIndex %>]" value="<%= page.title || '' %>" maxlength="120" placeholder="Laissez vide pour ne pas afficher de titre">
-          </div>
-
-          <div class="row-aside page-actions">
-            <button type="submit" name="action" value="add_question:<%= page.position %>" class="btn btn-outline btn-sm">Ajouter une question</button>
-            <%# La seule page du formulaire ne peut pas partir : il ne resterait
-                aucune question à afficher. %>
-            <% if (pages.length > 1) { %>
-              <button type="submit" name="action" value="remove_page:<%= pageIndex %>" class="btn btn-outline btn-sm btn-ghost-danger" title="Les questions de cette page rejoignent la page précédente">Supprimer la page</button>
-            <% } %>
           </div>
 
           <div class="stack" data-page-questions>
@@ -229,6 +227,13 @@
                 <p>Aucune question sur cette page.</p>
               </div>
             <% } %>
+          </div>
+
+          <%# Le pied de page accueille l'ajout, l'entete la suppression : les deux
+              actions restent opposees sans jamais se retrouver dans la meme
+              rangee que le titre de la page, qui doit rester lisible. %>
+          <div class="page-foot">
+            <button type="submit" name="action" value="add_question:<%= page.position %>" class="btn btn-outline btn-sm btn-add-question">Ajouter une question</button>
           </div>
         </section>
       <% }); %>

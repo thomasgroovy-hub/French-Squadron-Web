@@ -268,6 +268,14 @@
       font-size: 0.8rem;
     }
 
+    /* Taille de confort pour une action de fond de bloc : lisible au clic, mais
+       assez petite pour ne paspeser sur l'en-tête de la page. */
+    .btn-xs {
+      padding: 0.2rem 0.5rem;
+      font-size: 0.72rem;
+      border-radius: 7px;
+    }
+
     .container {
       max-width: 1180px;
       margin: 0 auto;
@@ -454,16 +462,16 @@
        `legend` d'un `fieldset` est retiré du flux et vient se poser sur la
        bordure, par-dessus le premier champ. */
     .page-block { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1rem; margin: 0; display: grid; gap: 0.75rem; background: var(--bg-elevated); }
-    .page-legend { padding: 0; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
-    /* Actions d'une page : les deux boutons de même taille, calés sur les deux
-       bords pour que la colonne de droite reste alignée d'une page à l'autre. */
-    .page-actions { justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
-    .page-actions .btn { flex: 1 1 auto; justify-content: center; }
-    .page-actions .btn:first-child { margin-right: auto; }
-    /* Même gabarit que les autres boutons, seule la teinte change : la suppression
-       se distingue sans casser l'alignement de la rangée. */
-    .btn-ghost-danger { color: var(--danger); border-color: rgba(220, 38, 38, 0.28); }
+    .page-legend { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+    .page-legend .btn { text-transform: none; letter-spacing: 0; font-weight: 600; }
+    .btn-ghost-danger { color: var(--danger); border-color: rgba(220, 38, 38, 0.28); background: transparent; }
     .btn-ghost-danger:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger); border-color: rgba(220, 38, 38, 0.45); }
+    /* Pied de page : l'ajout est la seule action de la page, donc centré. */
+    .page-foot { display: flex; justify-content: center; padding-top: 0.35rem; border-top: 1px dashed var(--border); }
+    .page-foot .btn { min-width: 190px; justify-content: center; }
+    /* Un trait pointillé sépare l'action du contenu qu'elle complète : on sait
+       qu'elle ne s'applique pas à la dernière question affichée. */
+    .btn-add-question::before { content: '+'; font-size: 1.05em; line-height: 1; font-weight: 700; }
     .form-page { display: grid; gap: 1rem; }
     /* La pagination n'est activée qu'une fois le script passé : sans lui, toutes
        les pages restent visibles et le formulaire reste postable en un envoi. */
