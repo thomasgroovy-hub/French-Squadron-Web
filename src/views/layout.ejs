@@ -462,18 +462,25 @@
 
     .doc-grid { display: grid; gap: 12px; margin-top: 18px; }
     .doc-grid .shortcut { position: relative; overflow: hidden; min-height: 124px; align-items: center; padding: 14px 104px 14px 22px; background: var(--doc-card); border-color: var(--doc-card-border); border-radius: 10.5px; box-shadow: none; }
-    .doc-grid .shortcut:hover { border-color: var(--doc-muted); transform: none; }
+    .doc-grid .shortcut:hover { transform: none; }
     .doc-grid .shortcut > div { position: relative; z-index: 1; }
     .doc-grid .shortcut h2 { margin: 0 0 5px; font-size: 16.5px; line-height: 1.2; color: var(--doc-text); }
     .doc-grid .shortcut p { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--doc-muted); }
     /* La flèche reste en haut à droite, alignée sur les trois cartes. */
     .doc-grid .doc-arrow { position: absolute; top: 15px; right: 19px; width: 17px; height: 17px; color: var(--doc-muted); }
-    /* Filigranes : débordent de la carte, décoratifs, jamais cliquables. */
-    .doc-grid .doc-art { position: absolute; z-index: 0; display: block; color: var(--doc-art); pointer-events: none; }
-    .doc-grid .doc-art svg { width: 100%; height: 100%; }
+    /* Panneaux de la carte : PNG débordant des bords, décoratifs, jamais
+       cliquables. `grayscale` + `opacity` les ramènent au ton du filigrane,
+       quelle que soit la couleur du fichier d'origine. */
+    .doc-grid .doc-art { position: absolute; z-index: 0; display: block; pointer-events: none; object-fit: contain; filter: grayscale(1); opacity: 0.08; transition: opacity 0.15s ease; }
     .doc-grid [data-art="ethics"] { top: -8px; right: -30px; width: 132px; height: 132px; }
     .doc-grid [data-art="facility"] { right: -34px; bottom: -40px; width: 150px; height: 150px; }
     .doc-grid [data-art="discord"] { right: -22px; bottom: -28px; width: 116px; height: 132px; }
+    /* Survol : réservé aux pointeurs réels, et coupé si l'utilisateur a demandé
+       moins d'animations. Sur tactile la carte reste neutre. */
+    @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+      .doc-grid .shortcut:hover { border-color: var(--doc-muted); }
+      .doc-grid .shortcut:hover .doc-art { opacity: 0.12; }
+    }
     /* Carte sans URL configurée : lisible, mais plus cliquable. */
     .shortcut[aria-disabled="true"] { cursor: not-allowed; opacity: 0.55; }
     .shortcut[aria-disabled="true"]:hover { border-color: var(--border); transform: none; }
