@@ -5,6 +5,33 @@ if (!process.env.SESSION_SECRET) {
 }
 
 /**
+ * Rôles d'administration des formulaires : accès à *tous* les formulaires et à
+ * *toutes* les réponses, sans restriction d'auteur.
+ *
+ * Ils sont volontairement distincts de `formsRoleId`, qui reste le rôle de
+ * gestion « sur ses propres formulaires ». Un membre portant l'un de ces rôles
+ * n'est pas forcément recruteur : il supervise. La liste est lisible depuis
+ * `WEB_FORMS_ADMIN_ROLE_IDS` (séparateurs virgule ou espace) pour pouvoir la
+ * faire évoluer sans redéploiement ; les valeurs par défaut sont les deux rôles
+ * historiques.
+ */
+const DEFAULT_FORMS_ADMIN_ROLE_IDS = Object.freeze([
+  '1518411282909368420',
+  '1518410191933014057',
+]);
+
+function parseRoleIdList(raw, fallback) {
+  const entries = (typeof raw === 'string' ? raw : '')
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim())
+    // Un snowflake Discord fait 17 à 20 chiffres : filtrer ici évite qu'un
+    // reste de configuration ne soit silencieusement traité comme un rôle.
+    .filter((entry) => /^\d{17,20}$/.test(entry));
+  const unique = [...new Set(entries)];
+  return Object.freeze(unique.length ? unique : fallback);
+}
+
+/**
  * Seules les URL http(s) absolues atteignent une vue : `javascript:` ou `data:`
  * finiraient dans un href, et une valeur tronquée casserait le lien au lieu de
  * retomber sur le repli. Ces trois liens sont de la configuration publique
@@ -33,6 +60,13 @@ export const webConfig = {
   // Rôle de gestion des candidatures et des réponses. Totalement
   // indépendant de `targetRoleId` : ni parent, ni enfant, ni substitution.
   formsRoleId: process.env.WEB_FORMS_ROLE_ID || '1532037579816570981',
+  // Rôles d'administration des formulaires : accès transverse à tous les
+  // formulaires et à toutes les réponses. Orthogonal à `formsRoleId`, qui reste
+  // cantonné aux formulaires créés par son porteur.
+  formsAdminRoleIds: parseRoleIdList(
+    process.env.WEB_FORMS_ADMIN_ROLE_IDS,
+    DEFAULT_FORMS_ADMIN_ROLE_IDS,
+  ),
   // Rôle pour la gestion des membres (onglet Supervision) - Permadeath, sanctions, etc.
   memberManagementRoleId: process.env.WEB_MEMBER_MANAGEMENT_ROLE_ID || '1487266203864006707',
   // Liens publics de la page /documentation et du footer, configurables sur

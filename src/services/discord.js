@@ -147,13 +147,20 @@ export function invalidateGuildRoleCache(guildId = webConfig.guildId) {
 /**
  * Rôles qu'un formulaire a le droit d'accorder à l'acceptation d'une candidature.
  *
- * Ces deux rôles sont hors périmètre : ils sont filtrés à la lecture ET
+ * Ces rôles sont hors périmètre : ils sont filtrés à la lecture ET
  * rejetés à l'écriture côté serveur, car un client peut toujours poster un id à
  * la main en contournant le <select>.
+ *
+ * Les rôles d'administration des formulaires (`webConfig.formsAdminRoleIds`)
+ * doivent y figurer en priorité : les accorder par une candidature conferencingait
+ * l'ensemble du site à celui qui l'obtient. Ils sont lus depuis la configuration
+ * plutôt que recopiés ici, pour qu'une évolution de la liste ne puisse pas laisser
+ * un rôle jouissant de ce pouvoir hors de cette liste.
  */
 export const FORBIDDEN_GRANTABLE_ROLE_IDS = new Set([
   '1487264228342497384',
   '1487276505712033883',
+  ...webConfig.formsAdminRoleIds,
 ]);
 
 /**

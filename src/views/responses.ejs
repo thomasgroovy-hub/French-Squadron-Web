@@ -1,7 +1,12 @@
+<%
+  const adminScope = typeof isAdminView !== 'undefined' && isAdminView;
+%>
 <section class="card">
   <p class="eyebrow">Réponses</p>
-  <h1 style="font-size: 1.8rem; margin: 0.35rem 0;">Vos candidatures</h1>
-  <p class="muted">Vous ne voyez ici que les réponses aux formulaires que vous avez créés.</p>
+  <h1 style="font-size: 1.8rem; margin: 0.35rem 0;"><%= adminScope ? 'Toutes les candidatures' : 'Vos candidatures' %></h1>
+  <p class="muted"><%= adminScope
+    ? 'Vue d’administration : vous voyez ici les réponses à tous les formulaires du site, y compris ceux créés par d’autres membres.'
+    : 'Vous ne voyez ici que les réponses aux formulaires que vous avez créés.' %></p>
 </section>
 
 <% if (!entries.length) { %>
@@ -10,7 +15,7 @@
       <span class="empty-state-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5.5h14v10H9l-4 3.5z"/></svg>
       </span>
-      <p>Vous n’avez pas encore de formulaire. Créez-en un depuis l’onglet Candidatures.</p>
+      <p><%= adminScope ? 'Aucune candidature n’a encore été reçue sur ce site.' : 'Vous n’avez pas encore de formulaire. Créez-en un depuis l’onglet Candidatures.' %></p>
     </div>
   </section>
 <% } else { %>
@@ -26,6 +31,12 @@
           <span class="badge badge-<%= form.status === 'open' ? 'success' : (form.status === 'closed' ? 'danger' : 'warning') %>"><%= form.statusLabel %></span>
         </span>
       </div>
+
+      <%# Sur la vue globale, le créateur est ce qui rattache une réponse au bon
+          formulaire : il est donc affiché dans chaque en-tête. %>
+      <% if (entry.creator) { %>
+        <p class="muted" style="margin: 0 0 0.6rem;">Créé par <%= entry.creator.displayName || entry.creator.username %> · le <%= form.createdLabel %></p>
+      <% } %>
 
       <div class="stat-strip">
         <div class="stat">

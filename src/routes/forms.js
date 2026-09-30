@@ -1,6 +1,13 @@
 import { Router } from 'express';
 import { requireAuth } from '../auth/session.js';
-import { hasFormsRole, requireFormsRole } from '../auth/guards.js';
+import {
+  canManageForm,
+  canManageForms,
+  formsOwnerScope,
+  hasFormsAdminRole,
+  requireFormsAccess,
+  requireFormsAdmin,
+} from '../auth/guards.js';
 import { webConfig } from '../config.js';
 import {
   FIELD_TYPES,
@@ -18,6 +25,7 @@ import {
   getFormById,
   getPublishCooldownRemaining,
   getResponseById,
+  listAllForms,
   listFormsByCreator,
   listPublishedForms,
   listResponsesByCreator,
@@ -606,6 +614,21 @@ function describeForm(form) {
   return {
     ...form,
     statusLabel: FORM_STATUS_LABELS[form.status] || form.status,
+    createdLabel: formatDate(new Date(form.createdAt)),
+  };
+}
+
+/**
+ * Résout les identités Discord des créateurs en un seul aller-retour.
+ *
+ * Une candidature dont le candidat est inconnu de `site_users` doit rester
+ * identifiable : on retombe alors sur l'identifiant brut.
+ */
+function describeIdentity(identity, discordId) {
+  return {
+    username: identity?.discord_username || discordId,
+    displayName: identity?.global_name || null,
+    avatarUrl: identity?.avatar_url || null,
   };
 }
 
@@ -635,7 +658,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
    * formulaire reste ensuite 100 % natif au site. Rien n'est écrit en base ici :
    * la sauvegarde passe par le flux `createForm` habituel, après relecture.
    */
-  router.post('/importer-google-form', requireFormsRole, async (req, res) => {
+  router.post('/importer-google-form', requireFormsAccess, async (req, res) => {
     const parsed = await parseGoogleForm({ fetchFn, url: req.body?.url });
     const { roles: grantableRoles, error: rolesLoadError } = await loadGrantableRoles(fetchFn);
     if (parsed.error) {
@@ -695,13 +718,16 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
       );
 
       const statusMap = new Map(statusByForm.map((entry) => [entry.formId, entry]));
-      const isFormManager = hasFormsRole(req.memberData);
+      const isFormManager = canManageForms(req.memberData);
 
       res.render('forms', {
         title: 'Candidatures | Site-66',
         forms,
         ownForms: isFormManager ? ownForms.map(describeForm) : [],
         isFormManager,
+        // Only the administration roles get the transversal overview, so the
+        // shortcut is rendered for them alone instead of for every manager.
+        isFormsAdmin: hasFormsAdminRole(req.memberData),
         justSubmitted: req.query.envoyee === '1',
         submittedFormIds: new Set(
           forms
@@ -818,7 +844,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
 
   // ------------------------------------------------------------------- Builder
 
-  router.get('/nouveau', requireFormsRole, async (req, res) => {
+  router.get('/nouveau', requireFormsAccess, async (req, res) => {
     try {
       await ensureFormsTables(pool);
       const { roles: grantableRoles, error: rolesLoadError } = await loadGrantableRoles(fetchFn);
@@ -851,7 +877,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
     }
   });
 
-  router.post('/', requireFormsRole, async (req, res) => {
+  router.post('/', requireFormsAccess, async (req, res) => {
     const creatorDiscordId = req.session.user.id;
     const action = cleanText(req.body?.action, 64) || 'save';
     const move = cleanText(req.body?.move, 64);
@@ -936,15 +962,26 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
 
       const userId = req.session.user.id;
       const isOwner = form.creatorDiscordId === userId;
-      const roleNames = await fetchGuildRoleNames({ fetchFn });
+      // An administration-role member is a manager of *every* form, not only of
+      // the ones they created: they reach the builder whatever the status.
+      const isAdmin = hasFormsAdminRole(req.memberData);
+      const isAdminView = isAdmin && !isOwner;
+      const [roleNames, creators] = await Promise.all([
+        fetchGuildRoleNames({ fetchFn }),
+        isAdminView ? fetchSiteUsersByIds([form.creatorDiscordId], pool) : Promise.resolve(new Map()),
+      ]);
       const formView = {
         ...describeForm(form),
         grantedRoleName: form.grantedRoleId ? (roleNames.get(form.grantedRoleId) || null) : null,
       };
 
-      if (isOwner) {
+      if (canManageForm(req, form)) {
+        // The publication cooldown is a per-creator anti-spam rule. It is
+        // bypassed for the administration roles, in the builder as well as in
+        // `POST /:formId/publier`, so the button is never shown disabled for a
+        // publication the server would then accept.
         const [cooldown, roleLoad] = await Promise.all([
-          getPublishCooldownRemaining(userId, webConfig.formsPublishCooldownMinutes, pool),
+          isAdmin ? 0 : getPublishCooldownRemaining(userId, webConfig.formsPublishCooldownMinutes, pool),
           loadGrantableRoles(fetchFn),
         ]);
         return res.render('form-builder', {
@@ -953,6 +990,8 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
           grantableRoles: roleLoad.roles,
           rolesLoadError: roleLoad.error,
           isNew: false,
+          isAdminView,
+          formCreator: isAdminView ? describeIdentity(creators.get(form.creatorDiscordId), form.creatorDiscordId) : null,
           error: null,
           notice: cleanText(req.query.enregistre, 200) || null,
           importWarning: null,
@@ -997,12 +1036,12 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
     }
   });
 
-  router.post('/:formId', requireFormsRole, async (req, res) => {
+  router.post('/:formId', requireFormsAccess, async (req, res) => {
     const formId = Number.parseInt(req.params.formId, 10);
-    const creatorDiscordId = req.session.user.id;
+    const scope = formsOwnerScope(req);
     try {
       const existing = await getFormById(formId, pool);
-      if (!existing || existing.creatorDiscordId !== creatorDiscordId) {
+      if (!existing || !canManageForm(req, existing)) {
         return res.status(403).render('error', {
           title: 'Accès réservé',
           message: 'Seul le créateur de ce formulaire peut le gérer.',
@@ -1030,13 +1069,25 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         ? FORBIDDEN_ROLE_ERROR
         : validateBuilderInput(isStructuralAction, title, questions);
       if (error) {
-        const { roles: grantableRoles, error: rolesLoadError } = await loadGrantableRoles(fetchFn);
+        // The page is re-rendered for an administrator who is not the creator:
+        // it must keep saying whose form it is, error or not.
+        const isAdminView = scope.isAdmin && existing.creatorDiscordId !== scope.creatorDiscordId;
+        const [roleLoad, creatorIdentity] = await Promise.all([
+          loadGrantableRoles(fetchFn),
+          isAdminView
+            ? fetchSiteUsersByIds([existing.creatorDiscordId], pool)
+            : Promise.resolve(new Map()),
+        ]);
         return res.status(400).render('form-builder', {
           title: `${existing.title} | Candidatures`,
           form: { ...describeForm(existing), title, description, grantedRoleId, questions },
-          grantableRoles,
-          rolesLoadError,
+          grantableRoles: roleLoad.roles,
+          rolesLoadError: roleLoad.error,
           isNew: false,
+          isAdminView,
+          formCreator: isAdminView
+            ? describeIdentity(creatorIdentity.get(existing.creatorDiscordId), existing.creatorDiscordId)
+            : null,
           error,
           notice: null,
           importWarning: null,
@@ -1047,11 +1098,15 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
 
       await updateForm({
         formId,
-        creatorDiscordId,
+        creatorDiscordId: scope.creatorDiscordId,
         title,
         description,
         grantedRoleId,
         questions: toStoredQuestions(questions),
+        // Dropping the creator predicate is what lets an admin edit somebody
+        // else's form; it is derived from their Discord roles, never from the
+        // request, so it cannot be asked for.
+        includeAllForms: scope.includeAllForms,
         pool,
       });
 
@@ -1089,12 +1144,12 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
     return validateQuestionOptions(questions);
   }
 
-  router.post('/:formId/publier', requireFormsRole, async (req, res) => {
+  router.post('/:formId/publier', requireFormsAccess, async (req, res) => {
     const formId = Number.parseInt(req.params.formId, 10);
-    const creatorDiscordId = req.session.user.id;
+    const scope = formsOwnerScope(req);
     try {
       const form = await getFormById(formId, pool);
-      if (!form || form.creatorDiscordId !== creatorDiscordId) {
+      if (!form || !canManageForm(req, form)) {
         return res.status(403).render('error', {
           title: 'Accès réservé',
           message: 'Seul le créateur de ce formulaire peut le publier.',
@@ -1107,11 +1162,15 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         });
       }
 
-      const cooldown = await getPublishCooldownRemaining(
-        creatorDiscordId,
-        webConfig.formsPublishCooldownMinutes,
-        pool,
-      );
+      // Anti-spam on publication, per creator. Reopening someone else's form as
+      // an admin does not spend the creator's quota, nor the admin's own.
+      const cooldown = scope.isAdmin
+        ? 0
+        : await getPublishCooldownRemaining(
+          scope.creatorDiscordId,
+          webConfig.formsPublishCooldownMinutes,
+          pool,
+        );
       if (cooldown > 0) {
         return res.status(429).render('error', {
           title: 'Publication limitée',
@@ -1119,7 +1178,13 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         });
       }
 
-      await setFormStatus({ formId, creatorDiscordId, status: FORM_STATUS.OPEN, pool });
+      await setFormStatus({
+        formId,
+        creatorDiscordId: scope.creatorDiscordId,
+        status: FORM_STATUS.OPEN,
+        includeAllForms: scope.includeAllForms,
+        pool,
+      });
       return res.redirect(`/candidatures/${formId}?enregistre=${encodeURIComponent('Formulaire publié.')}`);
     } catch (error) {
       console.error('[WebRoutes] Error publishing form:', error);
@@ -1130,18 +1195,24 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
     }
   });
 
-  router.post('/:formId/fermer', requireFormsRole, async (req, res) => {
+  router.post('/:formId/fermer', requireFormsAccess, async (req, res) => {
     const formId = Number.parseInt(req.params.formId, 10);
-    const creatorDiscordId = req.session.user.id;
+    const scope = formsOwnerScope(req);
     try {
       const form = await getFormById(formId, pool);
-      if (!form || form.creatorDiscordId !== creatorDiscordId) {
+      if (!form || !canManageForm(req, form)) {
         return res.status(403).render('error', {
           title: 'Accès réservé',
           message: 'Seul le créateur de ce formulaire peut le fermer.',
         });
       }
-      await setFormStatus({ formId, creatorDiscordId, status: FORM_STATUS.CLOSED, pool });
+      await setFormStatus({
+        formId,
+        creatorDiscordId: scope.creatorDiscordId,
+        status: FORM_STATUS.CLOSED,
+        includeAllForms: scope.includeAllForms,
+        pool,
+      });
       return res.redirect(`/candidatures/${formId}?enregistre=${encodeURIComponent('Formulaire fermé.')}`);
     } catch (error) {
       console.error('[WebRoutes] Error closing form:', error);
@@ -1152,11 +1223,20 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
     }
   });
 
-  router.post('/:formId/supprimer', requireFormsRole, async (req, res) => {
+  router.post('/:formId/supprimer', requireFormsAccess, async (req, res) => {
     const formId = Number.parseInt(req.params.formId, 10);
-    const creatorDiscordId = req.session.user.id;
+    const scope = formsOwnerScope(req);
     try {
-      const removed = await deleteForm(formId, creatorDiscordId, pool);
+      const form = await getFormById(formId, pool);
+      if (!form || !canManageForm(req, form)) {
+        return res.status(403).render('error', {
+          title: 'Accès réservé',
+          message: 'Seul le créateur de ce formulaire peut le supprimer.',
+        });
+      }
+      const removed = await deleteForm(formId, scope.creatorDiscordId, pool, {
+        includeAllForms: scope.includeAllForms,
+      });
       if (!removed) {
         return res.status(403).render('error', {
           title: 'Accès réservé',
@@ -1177,22 +1257,22 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
 }
 
 /**
- * « Réponses » tab: the review inbox, reserved to the forms role from the very
- * first route. Mounted at `/reponses`. A manager only ever sees the responses
- * to the forms they created — the ownership filter lives in the SQL.
+ * « Réponses » tab: the review inbox. A manager only ever sees the responses to
+ * the forms they created — the ownership filter lives in the SQL. A member with
+ * an administration role sees the whole site instead. Mounted at `/reponses`.
  */
 export function createResponsesRouter({ pool, fetchFn } = {}) {
   const router = Router();
 
-  router.use(requireFormsRole);
+  router.use(requireFormsAccess);
 
   router.get('/', async (req, res) => {
     try {
-      const creatorDiscordId = req.session.user.id;
+      const scope = formsOwnerScope(req);
       const [forms, responses, pendingCount] = await Promise.all([
-        listFormsByCreator(creatorDiscordId, pool),
-        listResponsesByCreator(creatorDiscordId, pool),
-        countResponsesByCreator(creatorDiscordId, pool),
+        listFormsByCreator(scope.creatorDiscordId, pool, { includeAllForms: scope.includeAllForms }),
+        listResponsesByCreator(scope.creatorDiscordId, pool, { includeAllForms: scope.includeAllForms }),
+        countResponsesByCreator(scope.creatorDiscordId, pool, { includeAllForms: scope.includeAllForms }),
       ]);
       const formMap = new Map(forms.map((form) => [form.id, form]));
       const filter = cleanText(req.query.statut, 20) || 'all';
@@ -1214,6 +1294,13 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
         responsesByForm.get(response.formId).push(response);
       }
 
+      // On the global view the creator of each form is part of what the reviewer
+      // is looking at: without it, an answer accepted from the wrong form would
+      // be impossible to trace back.
+      const creatorIdentities = scope.isAdmin
+        ? await fetchSiteUsersByIds(forms.map((form) => form.creatorDiscordId), pool)
+        : new Map();
+
       const entries = forms.map((form) => {
         const all = responsesByForm.get(form.id) || [];
         const stats = {
@@ -1225,6 +1312,9 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
         const visible = filter === 'all' ? all : all.filter((item) => item.status === filter);
         return {
           form: describeForm(form),
+          creator: scope.isAdmin
+            ? describeIdentity(creatorIdentities.get(form.creatorDiscordId), form.creatorDiscordId)
+            : null,
           stats,
           responses: visible.map((item) => {
             const identity = identities.get(item.applicantDiscordId);
@@ -1245,6 +1335,7 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
         entries,
         pendingCount,
         filter,
+        isAdminView: scope.isAdmin,
       });
     } catch (error) {
       console.error('[WebRoutes] Error loading responses:', error);
@@ -1257,11 +1348,12 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
 
   router.get('/:responseId', async (req, res) => {
     try {
-      const creatorDiscordId = req.session.user.id;
+      const scope = formsOwnerScope(req);
       const response = await getResponseById(
         Number.parseInt(req.params.responseId, 10),
-        creatorDiscordId,
+        scope.creatorDiscordId,
         pool,
+        { includeAllForms: scope.includeAllForms },
       );
       if (!response) {
         return res.status(404).render('error', {
@@ -1286,6 +1378,8 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
         applicantAvatarUrl: applicant?.avatar_url || null,
         notice: cleanText(req.query.info, 200) || null,
         warning: null,
+        formCreatorDiscordId: response.formCreatorId || null,
+        isAdminView: scope.isAdmin && response.formCreatorId !== scope.creatorDiscordId,
       });
     } catch (error) {
       console.error('[WebRoutes] Error loading response detail:', error);
@@ -1305,9 +1399,15 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
         message: 'Cette action de traitement est inconnue.',
       });
     }
-    const creatorDiscordId = req.session.user.id;
+    const scope = formsOwnerScope(req);
+    // The reviewer recorded in the audit trail is always the connected user,
+    // never the form's creator: an admin accepting on someone's behalf must be
+    // traceable as themselves.
+    const reviewerDiscordId = scope.creatorDiscordId;
 
-    const response = await getResponseById(responseId, creatorDiscordId, pool);
+    const response = await getResponseById(responseId, scope.creatorDiscordId, pool, {
+      includeAllForms: scope.includeAllForms,
+    });
     if (!response) {
       return res.status(404).render('error', {
         title: 'Candidature introuvable',
@@ -1330,9 +1430,10 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
         // role or send the direct message twice.
         updated = await updateResponseStatus({
           responseId,
-          creatorDiscordId,
+          creatorDiscordId: scope.creatorDiscordId,
           status: RESPONSE_STATUS.ACCEPTED,
-          reviewerDiscordId: creatorDiscordId,
+          reviewerDiscordId,
+          includeAllForms: scope.includeAllForms,
           pool,
         });
         if (!updated) {
@@ -1366,9 +1467,10 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
       } else {
         updated = await updateResponseStatus({
           responseId,
-          creatorDiscordId,
+          creatorDiscordId: scope.creatorDiscordId,
           status: RESPONSE_STATUS.REJECTED,
-          reviewerDiscordId: creatorDiscordId,
+          reviewerDiscordId,
+          includeAllForms: scope.includeAllForms,
           pool,
         });
         if (!updated) {
@@ -1396,15 +1498,98 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
       },
       applicantName: applicant?.global_name || null,
       applicantUsername: applicant?.discord_username || null,
-      applicantAvatarUrl: applicant?.avatar_url || null,
-      notice: decision === RESPONSE_STATUS.ACCEPTED
-        ? 'Candidature acceptée.'
-        : 'Candidature refusée.',
-      warning: warnings.length
-        ? `Décision enregistrée, mais : ${warnings.join(' ')}`
-        : null,
+applicantAvatarUrl: applicant?.avatar_url || null,
+        notice: decision === RESPONSE_STATUS.ACCEPTED
+          ? 'Candidature acceptée.'
+          : 'Candidature refusée.',
+        warning: warnings.length
+          ? `Décision enregistrée, mais : ${warnings.join(' ')}`
+          : null,
+        // The answer belongs to somebody else's form when an admin reviews it:
+        // the page says so instead of implying the reader created the form.
+        formCreatorDiscordId: updated.formCreatorId || null,
+        isAdminView: scope.isAdmin && updated.formCreatorId !== reviewerDiscordId,
+      });
     });
+
+  return router;
+}
+
+/**
+ * « Administration » des formulaires : the transversal overview, reserved to the
+ * forms administration roles from the very first route. Mounted at
+ * `/administration/formulaires`.
+ *
+ * Every row exposes what the owner of a form sees plus the creator and the
+ * response counters, and reuses the very same action endpoints as the builder —
+ * no admin-only write route, so there is a single server-side permission check
+ * per action rather than two that could drift apart.
+ */
+export function createFormsAdminRouter({ pool, fetchFn } = {}) {
+  const router = Router();
+
+  router.use(requireAuth, requireFormsAdmin);
+
+  router.get('/formulaires', async (req, res) => {
+    try {
+      const forms = await listAllForms(pool);
+      const scope = formsOwnerScope(req);
+      // One batched read for the whole page: the review inbox already does this
+      // for applicants, and a form list without creator names would be unusable.
+      const creators = await fetchSiteUsersByIds(forms.map((form) => form.creatorDiscordId), pool);
+      const [roleNames, statusCounts] = await Promise.all([
+        fetchGuildRoleNames({ fetchFn }),
+        countFormsByStatus(pool),
+      ]);
+
+      res.render('forms-admin', {
+        title: 'Administration des formulaires | Site-66',
+        isAdminView: true,
+        entries: forms.map((form) => ({
+          form: describeForm(form),
+          creator: describeIdentity(creators.get(form.creatorDiscordId), form.creatorDiscordId),
+          isOwnForm: form.creatorDiscordId === scope.creatorDiscordId,
+          grantedRoleName: form.grantedRoleId ? (roleNames.get(form.grantedRoleId) || null) : null,
+        })),
+        totals: {
+          ...statusCounts,
+          all: forms.length,
+          responses: forms.reduce((total, form) => total + form.responseCount, 0),
+          pending: forms.reduce((total, form) => total + form.pendingCount, 0),
+        },
+      });
+    } catch (error) {
+      console.error('[WebRoutes] Error loading the forms administration overview:', error);
+      res.status(500).render('error', {
+        title: 'Erreur lors du chargement des formulaires',
+        message: 'Impossible de charger la vue d’administration. Veuillez réessayer plus tard.',
+      });
+    }
   });
 
   return router;
+}
+
+/**
+ * Head counters for the administration overview. `FORM_SELECT` already carries
+ * the response sub-counts, so this only needs the status breakdown; it degrades
+ * to zeros rather than failing the whole page.
+ */
+async function countFormsByStatus(pool) {
+  const counts = {
+    open: 0,
+    closed: 0,
+    draft: 0,
+  };
+  if (!pool) return counts;
+  try {
+    await ensureFormsTables(pool);
+    const [rows] = await pool.execute('SELECT status, COUNT(*) AS total FROM forms GROUP BY status');
+    for (const row of rows || []) {
+      if (row?.status in counts) counts[row.status] = Number(row.total || 0);
+    }
+  } catch (error) {
+    console.error('[WebRoutes] Unable to count forms per status:', error.message);
+  }
+  return counts;
 }

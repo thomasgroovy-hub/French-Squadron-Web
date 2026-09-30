@@ -16,14 +16,14 @@ import { fetchMemberDeaths } from '../services/deaths.js';
 import { fetchAllLinkedMembers, fetchLinkedMember } from '../services/members.js';
 import { getGrades, getRoleLabels } from '../config/roles.js';
 import {
-  hasFormsRole,
+  canManageForms,
+  hasFormsAdminRole,
   hasMemberManagementRole,
   hasTargetRole,
-  requireFormsRole,
   requireSupervisionAccess,
   requireTargetRole,
 } from '../auth/guards.js';
-import { createFormsRouter, createResponsesRouter } from './forms.js';
+import { createFormsAdminRouter, createFormsRouter, createResponsesRouter } from './forms.js';
 import { createDocumentationRouter } from './documentation.js';
 
 export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
@@ -39,7 +39,10 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       // Comit� d'�thique: may open a member file and manage its strikes.
       res.locals.canManageStrikes = hasTargetRole(req.memberData);
       // Forms/documentation management role, independent from the sanctions one.
-      res.locals.isFormManager = hasFormsRole(req.memberData);
+      // The administration roles also reach the module, but across every form,
+      // hence the separate local for the transversal views.
+      res.locals.isFormManager = canManageForms(req.memberData);
+      res.locals.isFormsAdmin = hasFormsAdminRole(req.memberData);
       // Cache for Roblox data to avoid duplicate fetches per request
       req.robloxCache = new Map();
       next();
@@ -139,6 +142,10 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
   // existed for the old MySQL-backed editor, which no longer exists.
   router.use('/candidatures', createFormsRouter({ pool, fetchFn }));
   router.use('/reponses', createResponsesRouter({ pool, fetchFn }));
+  // Supervision transverse des formulaires. Son propre routeur porte la porte
+  // `requireFormsAdmin` : le rôle de gestion « sur ses propres formulaires »
+  // n'y entre pas, et n'y gagne donc aucun droit nouveau.
+  router.use('/administration', createFormsAdminRouter({ pool, fetchFn }));
   router.use('/documentation', createDocumentationRouter());
 
   // A member file is reachable by the supervision role and by the comit�

@@ -229,6 +229,22 @@ const FORM_SELECT = `
          (SELECT COUNT(*) FROM form_responses r WHERE r.form_id = forms.id AND r.status = 'pending') AS pending_count
   FROM forms`;
 
+/**
+ * Builds the `forms.creator_discord_id = ?` restriction, or nothing at all.
+ *
+ * Every ownership-sensitive statement in this file goes through here, so the
+ * only way to read another member's forms is to pass `includeAllForms: true`,
+ * and the routes only do so after `hasFormsAdminRole` said yes. Keeping the
+ * filter in SQL — rather than filtering in the view — is what makes a direct
+ * API call useless: there is no request field that reaches this helper.
+ */
+function ownerClause(creatorDiscordId, includeAllForms, params) {
+  if (includeAllForms) return '';
+  if (!creatorDiscordId) return null;
+  params.push(creatorDiscordId);
+  return 'forms.creator_discord_id = ?';
+}
+
 /** All forms currently open to applicants. */
 export async function listPublishedForms(pool = getDatabasePool()) {
   if (!pool) return [];
@@ -245,14 +261,41 @@ export async function listPublishedForms(pool = getDatabasePool()) {
   }
 }
 
-/** Every form owned by a creator, whatever its status. */
-export async function listFormsByCreator(creatorDiscordId, pool = getDatabasePool()) {
-  if (!pool || !creatorDiscordId) return [];
+/**
+ * Every form of the site, whatever its status and whoever created it.
+ *
+ * Powers the administration overview. `limit` bounds the read: this list is a
+ * supervision screen, not an export, and an unbounded table scan on every page
+ * view would be the only place in this module able to hurt the site.
+ */
+export async function listAllForms(pool = getDatabasePool(), { limit = 500 } = {}) {
+  if (!pool) return [];
   try {
     await ensureFormsTables(pool);
+    const maxRows = Number.isInteger(limit) && limit > 0 ? limit : 500;
     const [rows] = await pool.execute(
-      `${FORM_SELECT} WHERE forms.creator_discord_id = ? ORDER BY forms.updated_at DESC, forms.id DESC`,
-      [creatorDiscordId],
+      `${FORM_SELECT} ORDER BY forms.created_at DESC, forms.id DESC LIMIT ?`,
+      [maxRows],
+    );
+    return rows.map(mapForm);
+  } catch (error) {
+    console.error('[FormsService] Unable to list every form:', error.message);
+    return [];
+  }
+}
+
+/** Every form owned by a creator, whatever its status. */
+export async function listFormsByCreator(creatorDiscordId, pool = getDatabasePool(), { includeAllForms = false } = {}) {
+  if (!pool) return [];
+  try {
+    await ensureFormsTables(pool);
+    const params = [];
+    const owner = ownerClause(creatorDiscordId, includeAllForms, params);
+    if (owner === null) return [];
+    const where = owner ? ` WHERE ${owner}` : '';
+    const [rows] = await pool.execute(
+      `${FORM_SELECT}${where} ORDER BY forms.updated_at DESC, forms.id DESC`,
+      params,
     );
     return rows.map(mapForm);
   } catch (error) {
@@ -324,10 +367,18 @@ export async function updateForm({
   description = '',
   grantedRoleId = null,
   questions = [],
+  includeAllForms = false,
   pool = getDatabasePool(),
 }) {
   if (!pool || !formId) return null;
   await ensureFormsTables(pool);
+
+  // Without the administration role, the creator is part of the WHERE clause:
+  // a forged `creatorDiscordId` in the request cannot reach another member's
+  // form, because the caller is not even allowed to choose that value.
+  const params = [title, description, grantedRoleId || null, formId];
+  const owner = ownerClause(creatorDiscordId, includeAllForms, params);
+  if (owner === null) return null;
 
   const connection = await pool.getConnection();
   try {
@@ -336,8 +387,8 @@ export async function updateForm({
     const [result] = await connection.execute(
       `UPDATE forms
        SET title = ?, description = ?, granted_role_id = ?
-       WHERE id = ? AND creator_discord_id = ?`,
-      [title, description, grantedRoleId || null, formId, creatorDiscordId],
+       WHERE id = ?${owner ? ` AND ${owner}` : ''}`,
+      params,
     );
     if (!result.affectedRows) {
       await connection.rollback();
@@ -400,12 +451,15 @@ async function syncQuestions(formId, questions, pool) {
   }
 }
 
-export async function deleteForm(formId, creatorDiscordId, pool = getDatabasePool()) {
+export async function deleteForm(formId, creatorDiscordId, pool = getDatabasePool(), { includeAllForms = false } = {}) {
   if (!pool || !formId) return false;
   await ensureFormsTables(pool);
+  const params = [formId];
+  const owner = ownerClause(creatorDiscordId, includeAllForms, params);
+  if (owner === null) return false;
   const [result] = await pool.execute(
-    'DELETE FROM forms WHERE id = ? AND creator_discord_id = ?',
-    [formId, creatorDiscordId],
+    `DELETE FROM forms WHERE id = ?${owner ? ` AND ${owner}` : ''}`,
+    params,
   );
   return Boolean(result.affectedRows);
 }
@@ -414,23 +468,22 @@ export async function setFormStatus({
   formId,
   creatorDiscordId,
   status,
+  includeAllForms = false,
   pool = getDatabasePool(),
 }) {
   if (!pool || !formId) return null;
   await ensureFormsTables(pool);
-  if (status === FORM_STATUS.OPEN) {
-    const [result] = await pool.execute(
-      'UPDATE forms SET status = ?, published_at = CURRENT_TIMESTAMP WHERE id = ? AND creator_discord_id = ?',
-      [status, formId, creatorDiscordId],
-    );
-    if (!result.affectedRows) return null;
-  } else {
-    const [result] = await pool.execute(
-      'UPDATE forms SET status = ? WHERE id = ? AND creator_discord_id = ?',
-      [status, formId, creatorDiscordId],
-    );
-    if (!result.affectedRows) return null;
-  }
+  const params = [status, formId];
+  const owner = ownerClause(creatorDiscordId, includeAllForms, params);
+  if (owner === null) return null;
+  // Republishing resets `published_at`, which is what orders the applicant-facing
+  // list; closing deliberately leaves the original publication date alone.
+  const publishedColumn = status === FORM_STATUS.OPEN ? ', published_at = CURRENT_TIMESTAMP' : '';
+  const [result] = await pool.execute(
+    `UPDATE forms SET status = ?${publishedColumn} WHERE id = ?${owner ? ` AND ${owner}` : ''}`,
+    params,
+  );
+  if (!result.affectedRows) return null;
   return getFormById(formId, pool);
 }
 
@@ -560,26 +613,33 @@ export async function submitResponse({
 }
 
 /**
- * Candidatures for the forms owned by `creatorDiscordId` only. The creator
- * filter lives in the SQL, not in the view, so a manager can never read
- * another manager's answers.
+ * Candidatures for the forms of `creatorDiscordId` only — or for every form of
+ * the site when `includeAllForms` is set, which only the administration roles
+ * can obtain. The creator filter lives in the SQL, not in the view, so a
+ * manager can never read another manager's answers by calling the route
+ * directly.
  */
-export async function listResponsesByCreator(creatorDiscordId, pool = getDatabasePool(), { formId = null } = {}) {
-  if (!pool || !creatorDiscordId) return [];
+export async function listResponsesByCreator(creatorDiscordId, pool = getDatabasePool(), { formId = null, includeAllForms = false } = {}) {
+  if (!pool) return [];
   try {
     await ensureFormsTables(pool);
-    const params = [creatorDiscordId];
-    let sql = `SELECT form_responses.*, forms.title AS form_title
-       FROM form_responses
-       INNER JOIN forms ON forms.id = form_responses.form_id
-       WHERE forms.creator_discord_id = ?`;
+    const params = [];
+    const conditions = [];
+    const owner = ownerClause(creatorDiscordId, includeAllForms, params);
+    if (owner === null) return [];
+    if (owner) conditions.push(owner);
     if (formId) {
-      sql += ' AND forms.id = ?';
+      conditions.push('forms.id = ?');
       params.push(formId);
     }
-    sql += ` ORDER BY FIELD(form_responses.status, 'pending', 'accepted', 'rejected'), form_responses.created_at DESC`;
-
-    const [rows] = await pool.execute(sql, params);
+    const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+    const [rows] = await pool.execute(
+      `SELECT form_responses.*, forms.title AS form_title
+       FROM form_responses
+       INNER JOIN forms ON forms.id = form_responses.form_id${where}
+       ORDER BY FIELD(form_responses.status, 'pending', 'accepted', 'rejected'), form_responses.created_at DESC`,
+      params,
+    );
     return rows.map(mapResponse);
   } catch (error) {
     console.error(`[FormsService] Unable to list responses for ${creatorDiscordId}:`, error.message);
@@ -587,24 +647,27 @@ export async function listResponsesByCreator(creatorDiscordId, pool = getDatabas
   }
 }
 
-export async function countResponsesByCreator(creatorDiscordId, pool = getDatabasePool()) {
-  const responses = await listResponsesByCreator(creatorDiscordId, pool);
+export async function countResponsesByCreator(creatorDiscordId, pool = getDatabasePool(), { includeAllForms = false } = {}) {
+  const responses = await listResponsesByCreator(creatorDiscordId, pool, { includeAllForms });
   return responses.filter((response) => response.status === RESPONSE_STATUS.PENDING).length;
 }
 
 /** Loads one candidature, enforcing ownership on the parent form. */
-export async function getResponseById(responseId, creatorDiscordId, pool = getDatabasePool()) {
-  if (!pool || !responseId || !creatorDiscordId) return null;
+export async function getResponseById(responseId, creatorDiscordId, pool = getDatabasePool(), { includeAllForms = false } = {}) {
+  if (!pool || !responseId) return null;
   try {
     await ensureFormsTables(pool);
+    const params = [responseId];
+    const owner = ownerClause(creatorDiscordId, includeAllForms, params);
+    if (owner === null) return null;
     const [rows] = await pool.execute(
       `SELECT form_responses.*, forms.title AS form_title, forms.creator_discord_id AS form_creator,
               forms.granted_role_id AS granted_role_id
        FROM form_responses
        INNER JOIN forms ON forms.id = form_responses.form_id
-       WHERE form_responses.id = ? AND forms.creator_discord_id = ?
+       WHERE form_responses.id = ?${owner ? ` AND ${owner}` : ''}
        LIMIT 1`,
-      [responseId, creatorDiscordId],
+      params,
     );
     if (!rows.length) return null;
     const response = mapResponse(rows[0]);
@@ -625,24 +688,31 @@ export async function getResponseById(responseId, creatorDiscordId, pool = getDa
  * concurrent reviews both read the candidature as pending, but only the first
  * UPDATE matches a row, so the Discord role and the direct message can never be
  * sent twice. Returns null when the candidature was already processed.
+ *
+ * The ownership restriction is a second predicate on the same statement rather
+ * than a check before it: an administration-role reviewer must still match
+ * exactly one pending row, so a double click stays harmless for them too.
  */
 export async function updateResponseStatus({
   responseId,
   creatorDiscordId,
   status,
   reviewerDiscordId,
+  includeAllForms = false,
   pool = getDatabasePool(),
 }) {
   if (!pool || !responseId) return null;
   await ensureFormsTables(pool);
+  const params = [status, reviewerDiscordId, responseId];
+  const owner = ownerClause(creatorDiscordId, includeAllForms, params);
+  if (owner === null) return null;
   const [result] = await pool.execute(
     `UPDATE form_responses
      SET status = ?, reviewer_discord_id = ?, reviewed_at = CURRENT_TIMESTAMP
      WHERE id = ?
-       AND status = 'pending'
-       AND form_id IN (SELECT id FROM forms WHERE creator_discord_id = ?)`,
-    [status, reviewerDiscordId, responseId, creatorDiscordId],
+       AND status = 'pending'${owner ? ` AND form_id IN (SELECT id FROM forms WHERE ${owner})` : ''}`,
+    params,
   );
   if (!result.affectedRows) return null;
-  return getResponseById(responseId, creatorDiscordId, pool);
+  return getResponseById(responseId, creatorDiscordId, pool, { includeAllForms });
 }

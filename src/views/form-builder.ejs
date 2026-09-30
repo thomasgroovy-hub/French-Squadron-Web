@@ -11,6 +11,18 @@
   </div>
 </section>
 
+<%# Un administrateur qui gère le formulaire d'un autre membre doit le voir
+    explicitement : sinon il pourrait croire être le propriétaire, et agir
+    (enregistrer, fermer, supprimer) sans savoir que le formulaire ne lui
+    appartient pas. %>
+<% if (typeof isAdminView !== 'undefined' && isAdminView) { %>
+  <div class="notice notice-warning" style="margin-top: 1rem;">
+    Administration : vous gérez ce formulaire, mais vous n’en êtes pas le créateur
+    (<%= formCreator ? (formCreator.displayName || formCreator.username) : 'créateur inconnu' %>).
+    Les enregistrements et les changements de statut sont appliqués au formulaire du créateur.
+  </div>
+<% } %>
+
 <% if (notice) { %>
   <div class="notice notice-success" style="margin-top: 1rem;"><%= notice %></div>
 <% } %>

@@ -17,7 +17,13 @@
     <div class="section-head">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       <h2>Gestion des formulaires</h2>
-      <span class="row-aside"><a href="/candidatures/nouveau" class="btn btn-discord btn-sm">Nouveau formulaire</a></span>
+      <span class="row-aside">
+        <%# Le raccourci de supervision n'existe que pour les rôles d'administration. %>
+        <% if (typeof isFormsAdmin !== 'undefined' && isFormsAdmin) { %>
+          <a href="/administration/formulaires" class="btn btn-outline btn-sm">Tous les formulaires</a>
+        <% } %>
+        <a href="/candidatures/nouveau" class="btn btn-discord btn-sm">Nouveau formulaire</a>
+      </span>
     </div>
     <% if (ownForms.length) { %>
       <div class="row-list">

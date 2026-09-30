@@ -26,6 +26,15 @@
 <% if (notice) { %>
   <div class="notice notice-success" style="margin-top: 1rem;"><%= notice %></div>
 <% } %>
+<%# Une administration qui traite la candidature d'un formulaire qu'elle n'a pas
+    créé doit le savoir avant de cliquer « Accepter » : la décision et le rôle
+    Discord accordé sont enregistrés en son nom, sur le formulaire d'autrui. %>
+<% if (typeof isAdminView !== 'undefined' && isAdminView) { %>
+  <div class="notice notice-warning" style="margin-top: 1rem;">
+    Administration : cette candidature appartient au formulaire d’un autre créateur
+    (identifiant <span class="pill-mono"><%= formCreatorDiscordId %></span>). En la traitant, vous endossez la décision en votre nom.
+  </div>
+<% } %>
 <% if (warning) { %>
   <div class="notice notice-danger" style="margin-top: 1rem;"><%= warning %></div>
 <% } %>

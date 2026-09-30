@@ -102,36 +102,62 @@ class FakeMysqlPool {
       } else if (/forms\.id = \?/i.test(sql)) {
         rows = rows.filter((row) => row.id === Number(params[0]));
       }
+      if (/LIMIT \?/i.test(sql)) rows = rows.slice(0, Number(params.at(-1)) || rows.length);
       return [rows];
     }
 
+    // Head counters of the administration overview.
+    if (/^SELECT status, COUNT\(\*\) AS total FROM forms GROUP BY status/i.test(sql)) {
+      const counts = new Map();
+      for (const form of this.store.forms) {
+        counts.set(form.status, (counts.get(form.status) || 0) + 1);
+      }
+      return [[...counts.entries()].map(([status, total]) => ({ status, total }))];
+    }
+
     if (/^UPDATE forms SET title = \?/i.test(sql)) {
-      const [title, description, grantedRoleId, formId, creator] = params;
-      const form = this.store.forms.find((row) => row.id === Number(formId) && row.creator_discord_id === creator);
+      const scoped = /AND forms\.creator_discord_id = \?/i.test(sql);
+      const [title, description, grantedRoleId, formId] = params;
+      const creator = scoped ? params[4] : undefined;
+      const form = scoped
+        ? this.store.forms.find((row) => row.id === Number(formId) && row.creator_discord_id === creator)
+        : this.store.forms.find((row) => row.id === Number(formId));
       if (!form) return [{ affectedRows: 0 }];
       Object.assign(form, { title, description, granted_role_id: grantedRoleId, updated_at: this.clock() });
       return [{ affectedRows: 1 }];
     }
 
     if (/^UPDATE forms SET status = \?, published_at/i.test(sql)) {
-      const [status, formId, creator] = params;
-      const form = this.store.forms.find((row) => row.id === Number(formId) && row.creator_discord_id === creator);
+      const scoped = /AND forms\.creator_discord_id = \?/i.test(sql);
+      const [status, formId] = params;
+      const creator = scoped ? params[2] : undefined;
+      const form = scoped
+        ? this.store.forms.find((row) => row.id === Number(formId) && row.creator_discord_id === creator)
+        : this.store.forms.find((row) => row.id === Number(formId));
       if (!form) return [{ affectedRows: 0 }];
       Object.assign(form, { status, published_at: this.clock(), updated_at: this.clock() });
       return [{ affectedRows: 1 }];
     }
 
     if (/^UPDATE forms SET status = \? WHERE/i.test(sql)) {
-      const [status, formId, creator] = params;
-      const form = this.store.forms.find((row) => row.id === Number(formId) && row.creator_discord_id === creator);
+      const scoped = /AND forms\.creator_discord_id = \?/i.test(sql);
+      const [status, formId] = params;
+      const creator = scoped ? params[2] : undefined;
+      const form = scoped
+        ? this.store.forms.find((row) => row.id === Number(formId) && row.creator_discord_id === creator)
+        : this.store.forms.find((row) => row.id === Number(formId));
       if (!form) return [{ affectedRows: 0 }];
       Object.assign(form, { status, updated_at: this.clock() });
       return [{ affectedRows: 1 }];
     }
 
     if (/^DELETE FROM forms WHERE/i.test(sql)) {
-      const [formId, creator] = params;
-      const index = this.store.forms.findIndex((row) => row.id === Number(formId) && row.creator_discord_id === creator);
+      const scoped = /AND forms\.creator_discord_id = \?/i.test(sql);
+      const [formId] = params;
+      const creator = scoped ? params[1] : undefined;
+      const index = scoped
+        ? this.store.forms.findIndex((row) => row.id === Number(formId) && row.creator_discord_id === creator)
+        : this.store.forms.findIndex((row) => row.id === Number(formId));
       if (index === -1) return [{ affectedRows: 0 }];
       const [removed] = this.store.forms.splice(index, 1);
       this.store.formQuestions = this.store.formQuestions.filter((q) => q.form_id !== removed.id);
@@ -209,10 +235,14 @@ class FakeMysqlPool {
     }
 
     // --------------------------------------------------------- form_responses
+    // An administration-role read drops the `forms.creator_discord_id = ?`
+    // predicate, so "no creator param" means "every form", not "no form".
     if (/^SELECT form_responses\.\*, forms\.title AS form_title/i.test(sql)) {
-      const [responseId, creator] = params;
+      const scoped = /forms\.creator_discord_id = \?/i.test(sql);
+      const responseId = params[0];
+      const creator = scoped ? params[1] : undefined;
       const rows = this.store.formResponses
-        .filter((r) => r.id === Number(responseId) && this.formOwnedBy(r.form_id, creator))
+        .filter((r) => r.id === Number(responseId) && (!scoped || this.formOwnedBy(r.form_id, creator)))
         .map((r) => ({
           ...r,
           form_title: this.formById(r.form_id)?.title ?? null,
@@ -223,11 +253,13 @@ class FakeMysqlPool {
     }
 
     if (/^SELECT form_responses\.\*.*INNER JOIN forms/i.test(sql) && !/form_responses\.id = \?/i.test(sql)) {
-      const [creator, maybeFormId] = params;
+      const scoped = /forms\.creator_discord_id = \?/i.test(sql);
+      const creator = scoped ? params[0] : undefined;
+      const formIdParam = scoped ? params[1] : params[0];
       let rows = this.store.formResponses
-        .filter((r) => this.formOwnedBy(r.form_id, creator))
+        .filter((r) => !scoped || this.formOwnedBy(r.form_id, creator))
         .map((r) => ({ ...r, form_title: this.formById(r.form_id)?.title ?? null }));
-      if (maybeFormId !== undefined) rows = rows.filter((r) => r.form_id === Number(maybeFormId));
+      if (formIdParam !== undefined) rows = rows.filter((r) => r.form_id === Number(formIdParam));
       return [rows];
     }
 
@@ -263,9 +295,11 @@ class FakeMysqlPool {
     }
 
     if (/^UPDATE form_responses SET status/i.test(sql)) {
-      const [status, reviewerId, responseId, creator] = params;
+      const scoped = /forms\.creator_discord_id = \?/i.test(sql);
+      const [status, reviewerId, responseId] = params;
+      const creator = scoped ? params[3] : undefined;
       const row = this.store.formResponses.find(
-        (r) => r.id === Number(responseId) && r.status === 'pending' && this.formOwnedBy(r.form_id, creator),
+        (r) => r.id === Number(responseId) && r.status === 'pending' && (!scoped || this.formOwnedBy(r.form_id, creator)),
       );
       if (!row) return [{ affectedRows: 0 }];
       Object.assign(row, { status, reviewer_discord_id: reviewerId, reviewed_at: this.clock() });

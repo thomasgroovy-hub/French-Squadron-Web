@@ -1,0 +1,107 @@
+<%# Vue transversale des formulaires. Les liens d'action pointent vers les
+    mêmes endpoints que le builder du propriétaire : il n'existe donc pas de
+    second chemin d'écriture à garder synchronisé, et la vérification serveur
+    reste en un seul endroit. %>
+<section class="card">
+  <p class="eyebrow">Administration</p>
+  <h1 style="font-size: 1.8rem; margin: 0.35rem 0;">Tous les formulaires</h1>
+  <p class="muted">Vue d’ensemble de tous les formulaires du site, whoever les ait créés. Vous pouvez consulter, fermer, rouvrir et supprimer n’importe lequel d’entre eux.</p>
+</section>
+
+<% if (entries.length) { %>
+  <div class="stat-strip" style="margin-top: 1rem;">
+    <div class="stat">
+      <span class="stat-value"><%= totals.all %></span>
+      <span class="stat-label">Formulaires</span>
+    </div>
+    <div class="stat">
+      <span class="stat-value"><%= totals.open %></span>
+      <span class="stat-label">Ouverts</span>
+    </div>
+    <div class="stat">
+      <span class="stat-value"><%= totals.closed %></span>
+      <span class="stat-label">Fermés</span>
+    </div>
+    <div class="stat">
+      <span class="stat-value"><%= totals.draft %></span>
+      <span class="stat-label">Brouillons</span>
+    </div>
+    <div class="stat">
+      <span class="stat-value"><%= totals.responses %></span>
+      <span class="stat-label">Réponses</span>
+    </div>
+    <div class="stat">
+      <span class="stat-value"><%= totals.pending %></span>
+      <span class="stat-label">En attente</span>
+    </div>
+  </div>
+<% } %>
+
+<% if (!entries.length) { %>
+  <section class="card" style="margin-top: 1rem;">
+    <div class="empty-state">
+      <span class="empty-state-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3.8h7l4 4V20H7z"/><path d="M14 4v4h4"/></svg>
+      </span>
+      <p>Aucun formulaire n’a encore été créé sur le site.</p>
+    </div>
+  </section>
+<% } else { %>
+  <section class="card" style="margin-top: 1rem;">
+    <div class="section-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4.5 6.5h15M4.5 12h15M4.5 17.5h15"/></svg>
+      <h2>Formulaires du site</h2>
+    </div>
+
+    <div class="row-list">
+      <% entries.forEach((entry) => { const form = entry.form; %>
+        <article class="data-row">
+          <span class="row-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3.8h7l4 4V20H7z"/><path d="M14 4v4h4M10 13h5M10 16h5"/></svg>
+          </span>
+          <div class="row-body">
+            <div class="row-title"><%= form.title %></div>
+            <div class="row-subtitle">
+              Créé par <%= entry.creator.displayName || entry.creator.username %>
+              <% if (entry.isOwnForm) { %> (vous)<% } %>
+              · le <%= form.createdLabel %>
+            </div>
+            <div class="row-subtitle">
+              <%= form.responseCount %> candidature<%= form.responseCount > 1 ? 's' : '' %>
+              <% if (form.pendingCount) { %>· <%= form.pendingCount %> en attente<% } %>
+              <% if (form.grantedRoleId) { %>
+                · rôle attribué : <%= entry.grantedRoleName || form.grantedRoleId %>
+              <% } %>
+            </div>
+            <% if (form.description) { %>
+              <div class="row-subtitle"><%= form.description %></div>
+            <% } %>
+          </div>
+          <div class="row-aside">
+            <span class="badge badge-<%= form.status === 'open' ? 'success' : (form.status === 'closed' ? 'danger' : 'warning') %>"><%= form.statusLabel %></span>
+            <div class="row-aside" style="gap: 0.35rem; flex-wrap: wrap; justify-content: flex-end;">
+              <a href="/candidatures/<%= form.id %>" class="btn btn-outline btn-sm">Consulter</a>
+              <% if (form.responseCount) { %>
+                <a href="/reponses" class="btn btn-outline btn-sm">Réponses (<%= form.responseCount %>)</a>
+              <% } %>
+              <% if (form.status === 'open') { %>
+                <form action="/candidatures/<%= form.id %>/fermer" method="post">
+                  <button type="submit" class="btn btn-outline btn-sm">Fermer</button>
+                </form>
+              <% } else { %>
+                <%# « Rouvrir » réutilise la publication existante : même endpoint,
+                    même cooldown côté créateur, aucune fonctionnalité dupliquée. %>
+                <form action="/candidatures/<%= form.id %>/publier" method="post">
+                  <button type="submit" class="btn btn-outline btn-sm"><%= form.status === 'closed' ? 'Rouvrir' : 'Publier' %></button>
+                </form>
+              <% } %>
+              <form action="/candidatures/<%= form.id %>/supprimer" method="post" data-confirm="Supprimer ce formulaire et toutes les candidatures qu’il a reçues ?">
+                <button type="submit" class="btn btn-outline btn-sm">Supprimer</button>
+              </form>
+            </div>
+          </div>
+        </article>
+      <% }); %>
+    </div>
+  </section>
+<% } %>

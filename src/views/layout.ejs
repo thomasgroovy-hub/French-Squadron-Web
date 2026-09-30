@@ -630,6 +630,11 @@
         <% if (typeof isFormManager !== 'undefined' && isFormManager) { %>
           <a href="/reponses" class="nav-tab <%= currentPath.startsWith('/reponses') ? 'is-active' : '' %>">Réponses</a>
         <% } %>
+        <%# Onglet de supervision des formulaires : réservé aux rôles
+            d'administration, qui voient tous les formulaires du site. %>
+        <% if (typeof isFormsAdmin !== 'undefined' && isFormsAdmin) { %>
+          <a href="/administration/formulaires" class="nav-tab <%= currentPath.startsWith('/administration') ? 'is-active' : '' %>">Administration</a>
+        <% } %>
         <% if ((typeof isMemberManagement !== 'undefined' && isMemberManagement) || (typeof canManageStrikes !== 'undefined' && canManageStrikes)) { %>
           <a href="/members" class="nav-tab <%= currentPath.startsWith('/members') ? 'is-active' : '' %>">Supervision</a>
         <% } %>
