@@ -5,8 +5,10 @@ import {
   canManageForms,
   formsOwnerScope,
   hasFormsAdminRole,
+  meetsRequiredRole,
   requireFormsAccess,
   requireFormsAdmin,
+  REQUIRED_ROLE_DENIED_MESSAGE,
 } from '../auth/guards.js';
 import { webConfig } from '../config.js';
 import {
@@ -42,6 +44,7 @@ import {
 } from '../services/forms.js';
 import {
   FORBIDDEN_GRANTABLE_ROLE_IDS,
+  fetchAllGuildRoles,
   fetchGrantableGuildRoles,
   fetchGuildRoleNames,
   formatDate,
@@ -146,6 +149,18 @@ function isForbiddenRoleId(value) {
 }
 
 /**
+ * Rôle « nécessaire » pour voir et répondre. Volontairement SANS le filtre des
+ * rôles interdits : contrairement au rôle attribué, celui-ci ne fait que
+ * retirer l'accès. N'importe quel snowflake est donc accepté, et le champ vide
+ * signifie « ouvert à tous ».
+ */
+function normalizeRequiredRoleId(value) {
+  const roleId = cleanText(value, 20);
+  if (!SNOWFLAKE_PATTERN.test(roleId)) return null;
+  return roleId;
+}
+
+/**
  * Rôles proposables dans le select. Toujours appelé avant un rendu du builder.
  * Un échec Discord ne casse pas la page : la liste est simplement vide, et le
  * créateur est prévenu pour qu'il ne croie pas à une liste de rôles vide.
@@ -155,6 +170,16 @@ async function loadGrantableRoles(fetchFn) {
     return { roles: await fetchGrantableGuildRoles({ fetchFn }), error: null };
   } catch (error) {
     console.error('[WebRoutes] Unable to load grantable roles:', error.message);
+    return { roles: [], error: true };
+  }
+}
+
+/** Tous les rôles, pour le select « rôle nécessaire ». Même tolérance à l'échec. */
+async function loadAllRoles(fetchFn) {
+  try {
+    return { roles: await fetchAllGuildRoles({ fetchFn }), error: null };
+  } catch (error) {
+    console.error('[WebRoutes] Unable to load guild roles:', error.message);
     return { roles: [], error: true };
   }
 }
@@ -478,6 +503,7 @@ function emptyDraftForm() {
     title: '',
     description: '',
     grantedRoleId: null,
+    requiredRoleId: null,
     status: FORM_STATUS.DRAFT,
     statusLabel: FORM_STATUS_LABELS[FORM_STATUS.DRAFT],
     questions: [{
@@ -940,13 +966,15 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
    */
   router.post('/importer-google-form', requireFormsAccess, async (req, res) => {
     const parsed = await parseGoogleForm({ fetchFn, url: req.body?.url });
-    const { roles: grantableRoles, error: rolesLoadError } = await loadGrantableRoles(fetchFn);
+    const [grantable, all] = await Promise.all([loadGrantableRoles(fetchFn), loadAllRoles(fetchFn)]);
     if (parsed.error) {
       return res.status(400).render('form-builder', {
         title: 'Nouveau formulaire | Candidatures',
         form: withPages(emptyDraftForm()),
-        grantableRoles,
-        rolesLoadError,
+        grantableRoles: grantable.roles,
+        rolesLoadError: grantable.error,
+        allRoles: all.roles,
+        requiredRolesLoadError: all.error,
         isNew: true,
         error: parsed.error,
         notice: null,
@@ -967,8 +995,10 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         statusLabel: FORM_STATUS_LABELS[FORM_STATUS.DRAFT],
         questions: parsed.questions,
       }),
-      grantableRoles,
-      rolesLoadError,
+      grantableRoles: grantable.roles,
+      rolesLoadError: grantable.error,
+      allRoles: all.roles,
+      requiredRolesLoadError: all.error,
       isNew: true,
       error: null,
       notice: parsed.notice,
@@ -985,10 +1015,14 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
   router.get('/', async (req, res) => {
     try {
       const userId = req.session.user.id;
-      const [forms, ownForms] = await Promise.all([
+      const [published, ownForms] = await Promise.all([
         listPublishedForms(pool),
         listFormsByCreator(userId, pool),
       ]);
+      // Un formulaire verrouillé derrière un rôle n'est pas listé : l'afficher
+      // ne ferait qu'inviter à un clic qui répond 403. Le filtre est fait sur
+      // les rôles serveur reçus de Discord, pas sur ce que la page déclare.
+      const forms = published.filter((form) => meetsRequiredRole(req.memberData, form.requiredRoleId));
       const statusByForm = await Promise.all(
         forms.map(async (form) => {
           const accepted = await findAcceptedResponse(form.id, userId, pool);
@@ -1037,6 +1071,16 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         return res.status(404).render('error', {
           title: 'Formulaire indisponible',
           message: 'Ce formulaire n’est pas ouvert aux candidatures.',
+        });
+      }
+
+      // Même verrou que sur la lecture, et c'est ici qu'il compte : c'est le
+      // seul endroit où une candidature est réellement écrite. Un formulaire
+      // rejoué ou posté à la main s'arrête ici.
+      if (!meetsRequiredRole(req.memberData, form.requiredRoleId)) {
+        return res.status(403).render('error', {
+          title: 'Accès réservé',
+          message: REQUIRED_ROLE_DENIED_MESSAGE,
         });
       }
 
@@ -1127,12 +1171,14 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
   router.get('/nouveau', requireFormsAccess, async (req, res) => {
     try {
       await ensureFormsTables(pool);
-      const { roles: grantableRoles, error: rolesLoadError } = await loadGrantableRoles(fetchFn);
+      const [grantable, all] = await Promise.all([loadGrantableRoles(fetchFn), loadAllRoles(fetchFn)]);
       res.render('form-builder', {
         title: 'Nouveau formulaire | Candidatures',
         form: withPages(emptyDraftForm()),
-        grantableRoles,
-        rolesLoadError,
+        grantableRoles: grantable.roles,
+        rolesLoadError: grantable.error,
+        allRoles: all.roles,
+        requiredRolesLoadError: all.error,
         isNew: true,
         error: null,
         notice: null,
@@ -1156,10 +1202,11 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
     const title = cleanText(req.body?.title, 120);
     const description = cleanText(req.body?.description, 2000);
     const grantedRoleId = normalizeRoleId(req.body?.granted_role_id);
+    const requiredRoleId = normalizeRequiredRoleId(req.body?.required_role_id);
     const { questions, notice } = applyStructuralAction(action, move, parseQuestions(req.body));
 
     const renderBuilder = async (error) => {
-      const { roles: grantableRoles, error: rolesLoadError } = await loadGrantableRoles(fetchFn);
+      const [grantable, all] = await Promise.all([loadGrantableRoles(fetchFn), loadAllRoles(fetchFn)]);
       return res.status(error ? 400 : 200).render('form-builder', {
         title: 'Nouveau formulaire | Candidatures',
         form: withPages({
@@ -1167,12 +1214,15 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
           title,
           description,
           grantedRoleId,
+          requiredRoleId,
           status: FORM_STATUS.DRAFT,
           statusLabel: FORM_STATUS_LABELS[FORM_STATUS.DRAFT],
           questions,
         }),
-        grantableRoles,
-        rolesLoadError,
+        grantableRoles: grantable.roles,
+        rolesLoadError: grantable.error,
+        allRoles: all.roles,
+        requiredRolesLoadError: all.error,
         isNew: true,
         error,
         notice: STRUCTURAL_NOTICES[notice] || null,
@@ -1208,6 +1258,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         title,
         description,
         grantedRoleId,
+        requiredRoleId,
         questions: toStoredQuestions(filledQuestions),
         pool,
       });
@@ -1250,15 +1301,18 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         // bypassed for the administration roles, in the builder as well as in
         // `POST /:formId/publier`, so the button is never shown disabled for a
         // publication the server would then accept.
-        const [cooldown, roleLoad] = await Promise.all([
+        const [cooldown, roleLoad, allRoleLoad] = await Promise.all([
           isAdmin ? 0 : getPublishCooldownRemaining(userId, webConfig.formsPublishCooldownMinutes, pool),
           loadGrantableRoles(fetchFn),
+          loadAllRoles(fetchFn),
         ]);
         return res.render('form-builder', {
           title: `${form.title} | Candidatures`,
           form: formView,
           grantableRoles: roleLoad.roles,
           rolesLoadError: roleLoad.error,
+          allRoles: allRoleLoad.roles,
+          requiredRolesLoadError: allRoleLoad.error,
           isNew: false,
           isAdminView,
           // Un administrateur qui ouvre un formulaire d'autrui doit revenir à
@@ -1277,6 +1331,17 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         return res.status(404).render('error', {
           title: 'Formulaire indisponible',
           message: 'Ce formulaire n’est pas ouvert aux candidatures.',
+        });
+      }
+
+      // Verrou de visibilité, après le builder : un créateur ou un admin garde
+      // toujours la main sur son formulaire, même verrouillé derrière un rôle
+      // qu'il ne possède pas. `req.memberData` est rempli par le middleware
+      // Discord, jamais par la requête.
+      if (!meetsRequiredRole(req.memberData, form.requiredRoleId)) {
+        return res.status(403).render('error', {
+          title: 'Accès réservé',
+          message: REQUIRED_ROLE_DENIED_MESSAGE,
         });
       }
 
@@ -1377,6 +1442,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
       const title = cleanText(req.body?.title, 120);
       const description = cleanText(req.body?.description, 2000);
       const grantedRoleId = normalizeRoleId(req.body?.granted_role_id);
+      const requiredRoleId = normalizeRequiredRoleId(req.body?.required_role_id);
 
       const isStructuralAction = action === 'add_question'
         || action.startsWith('remove_question:')
@@ -1396,8 +1462,9 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         // The page is re-rendered for an administrator who is not the creator:
         // it must keep saying whose form it is, error or not.
         const isAdminView = scope.isAdmin && existing.creatorDiscordId !== scope.creatorDiscordId;
-        const [roleLoad, creatorIdentity] = await Promise.all([
+        const [roleLoad, allRoleLoad, creatorIdentity] = await Promise.all([
           loadGrantableRoles(fetchFn),
+          loadAllRoles(fetchFn),
           isAdminView
             ? fetchSiteUsersByIds([existing.creatorDiscordId], pool)
             : Promise.resolve(new Map()),
@@ -1410,10 +1477,13 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
             description,
             grantedRoleId,
             grantedRoleName: existing.grantedRoleId ? (existing.grantedRoleName || null) : null,
+            requiredRoleId,
             questions,
           }),
           grantableRoles: roleLoad.roles,
           rolesLoadError: roleLoad.error,
+          allRoles: allRoleLoad.roles,
+          requiredRolesLoadError: allRoleLoad.error,
           isNew: false,
           isAdminView,
           backTo: isAdminView ? '/administration/formulaires' : '/candidatures',
@@ -1434,6 +1504,7 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         title,
         description,
         grantedRoleId,
+        requiredRoleId,
         questions: toStoredQuestions(questions),
         // Dropping the creator predicate is what lets an admin edit somebody
         // else's form; it is derived from their Discord roles, never from the

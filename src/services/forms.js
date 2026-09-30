@@ -65,6 +65,14 @@ const QUESTION_COLUMN_MIGRATIONS = Object.freeze([
 ]);
 
 /**
+ * Same idea for `forms`. `required_role_id` is NULL on every existing row, so
+ * every form published before this change stays visible to the whole squadron.
+ */
+const FORM_COLUMN_MIGRATIONS = Object.freeze([
+  ['required_role_id', 'required_role_id VARCHAR(20) NULL AFTER granted_role_id'],
+]);
+
+/**
  * An image is referenced by URL, never uploaded: a form body lives in MySQL, and
  * storing binaries there (or on the ephemeral container filesystem) would make
  * the illustration the first thing lost on the next deploy. Only `http(s)` is
@@ -130,6 +138,7 @@ export async function ensureFormsTables(pool) {
           title VARCHAR(120) NOT NULL,
           description TEXT NULL,
           granted_role_id VARCHAR(20) NULL,
+          required_role_id VARCHAR(20) NULL,
           status ENUM('draft', 'open', 'closed') NOT NULL DEFAULT 'draft',
           published_at DATETIME NULL,
           created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -158,6 +167,15 @@ export async function ensureFormsTables(pool) {
             REFERENCES forms (id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
+
+      // Idem sur `forms` : `required_role_id` est ajouté en place, NULL par
+      // défaut, donc aucune publication existante ne change de visibilité.
+      const [formColumns] = await pool.execute('SHOW COLUMNS FROM forms');
+      const knownFormColumns = Array.isArray(formColumns) ? formColumns : [];
+      for (const [column, definition] of FORM_COLUMN_MIGRATIONS) {
+        if (knownFormColumns.some((existing) => existing?.Field === column)) continue;
+        await pool.execute(`ALTER TABLE forms ADD COLUMN ${definition}`);
+      }
 
       // The `options` column and the widened ENUM are added after the table
       // exists, so a database created before this change is migrated in place on
@@ -226,6 +244,8 @@ function mapForm(row) {
     title: row.title,
     description: row.description || '',
     grantedRoleId: row.granted_role_id || null,
+    // NULL = ouvert à tous les membres connectés. Voir `meetsRequiredRole`.
+    requiredRoleId: row.required_role_id || null,
     status: row.status,
     publishedAt: row.published_at,
     createdAt: row.created_at,
@@ -436,6 +456,7 @@ export async function createForm({
   title,
   description = '',
   grantedRoleId = null,
+  requiredRoleId = null,
   questions = [],
   pool = getDatabasePool(),
 }) {
@@ -447,8 +468,8 @@ export async function createForm({
     await connection.beginTransaction();
 
     const [result] = await connection.execute(
-      'INSERT INTO forms (creator_discord_id, title, description, granted_role_id) VALUES (?, ?, ?, ?)',
-      [creatorDiscordId, title, description, grantedRoleId || null],
+      'INSERT INTO forms (creator_discord_id, title, description, granted_role_id, required_role_id) VALUES (?, ?, ?, ?, ?)',
+      [creatorDiscordId, title, description, grantedRoleId || null, requiredRoleId || null],
     );
     const formId = result.insertId;
     await syncQuestions(formId, questions, connection);
@@ -469,6 +490,7 @@ export async function updateForm({
   title,
   description = '',
   grantedRoleId = null,
+  requiredRoleId = null,
   questions = [],
   includeAllForms = false,
   pool = getDatabasePool(),
@@ -479,7 +501,7 @@ export async function updateForm({
   // Without the administration role, the creator is part of the WHERE clause:
   // a forged `creatorDiscordId` in the request cannot reach another member's
   // form, because the caller is not even allowed to choose that value.
-  const params = [title, description, grantedRoleId || null, formId];
+  const params = [title, description, grantedRoleId || null, requiredRoleId || null, formId];
   const owner = ownerClause(creatorDiscordId, includeAllForms, params);
   if (owner === null) return null;
 
@@ -489,7 +511,7 @@ export async function updateForm({
 
     const [result] = await connection.execute(
       `UPDATE forms
-       SET title = ?, description = ?, granted_role_id = ?
+       SET title = ?, description = ?, granted_role_id = ?, required_role_id = ?
        WHERE id = ?${owner ? ` AND ${owner}` : ''}`,
       params,
     );

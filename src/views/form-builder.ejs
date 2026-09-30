@@ -105,6 +105,30 @@
         <% }); %>
       </select>
     </div>
+
+    <div class="field-block">
+      <label class="field-label" for="form-required-role">Rôle nécessaire pour voir et répondre</label>
+      <p class="question-help">
+        facultatif — laissez sur « Aucun rôle » pour que le formulaire reste visible par tous les membres.
+        Sinon, seuls les membres possédant ce rôle pourront l’ouvrir et y répondre.
+      </p>
+      <%# La liste complète est utilisée ici (et non celle du rôle attribué) :
+          restreindre la visibility n'accorde aucun privilège, donc les rôles
+          d'administration sont proposables sans danger. %>
+      <% const requiredRolesUnavailable = typeof requiredRolesLoadError !== 'undefined' && requiredRolesLoadError; %>
+      <% if (requiredRolesUnavailable) { %>
+        <p class="notice notice-warning" style="font-size: 0.8rem;">Impossible de charger la liste des rôles du serveur. Le formulaire restera accessible à tout le monde tant que ce n’est pas résolu.</p>
+        <% if (form.requiredRoleId) { %>
+          <input type="hidden" name="required_role_id" value="<%= form.requiredRoleId %>">
+        <% } %>
+      <% } %>
+      <select class="field-input" id="form-required-role" name="required_role_id" <%= requiredRolesUnavailable ? 'disabled' : '' %>>
+        <option value="">Aucun rôle</option>
+        <% (typeof allRoles !== 'undefined' ? allRoles : []).forEach((role) => { %>
+          <option value="<%= role.id %>" <%= form.requiredRoleId === role.id ? 'selected' : '' %>><%= role.name %></option>
+        <% }); %>
+      </select>
+    </div>
   </section>
 
   <section class="card">

@@ -17,6 +17,29 @@ export function hasFormsRole(memberData) {
 }
 
 /**
+ * Can this member see and answer this form?
+ *
+ * Three cases, in order:
+ *  - no `requiredRoleId`: the form is open to every connected member;
+ *  - the member holds the required role: access granted;
+ *  - otherwise denied.
+ *
+ * The role is read from the form row and the roles from `req.memberData`, both
+ * server-side, so a request cannot claim its way in. The creator and the
+ * administration roles are deliberately NOT covered here: a manager must always
+ * reach a form they created, even after locking it to a role they don't hold —
+ * the check lives at the call site, which asks `canManageForm` first.
+ */
+export function meetsRequiredRole(memberData, requiredRoleId) {
+  if (!requiredRoleId) return true;
+  return Array.isArray(memberData?.roles) && memberData.roles.includes(requiredRoleId);
+}
+
+/** Message shown when a form is locked behind a role the member lacks. */
+export const REQUIRED_ROLE_DENIED_MESSAGE =
+  'Ce formulaire est réservé aux membres possédant un rôle spécifique. Si vous pensez que c’est une erreur, contactez un responsable.';
+
+/**
  * True when the connected user carries one of the forms administration roles
  * (`webConfig.formsAdminRoleIds`). Unlike `hasFormsRole`, this is not scoped to
  * the forms the member created: it is the transversal "supervision" level of the

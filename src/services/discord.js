@@ -186,6 +186,29 @@ export async function fetchGrantableGuildRoles({
 }
 
 /**
+ * Tous les rôles du serveur, sans filtre, pour le select « rôle nécessaire ».
+ *
+ * Le filtre de `fetchGrantableGuildRoles` ne s'applique pas ici : il protège
+ * contre l'attribution d'un rôle d'administration, alors que ce sélecteur ne
+ * fait que restreindre la visibilité. Verrouiller un formulaire derrière un rôle
+ * d'administration n'accorde rien à personne — cela retire l'accès au plus
+ * grand nombre, à commencer par soi-même.
+ */
+export async function fetchAllGuildRoles({
+  guildId = webConfig.guildId,
+  botToken = webConfig.discordToken,
+  fetchFn = fetch,
+} = {}) {
+  const { names, failed } = await loadGuildRoleNames({ guildId, botToken, fetchFn });
+  if (failed) {
+    throw new Error('La liste des rôles du serveur n’a pas pu être chargée.');
+  }
+  return [...names.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+}
+
+/**
  * Fetches the user's guild member data via Discord Bot token to inspect roles
  * without requiring the oauth guilds.members.read scope.
  */
