@@ -520,6 +520,11 @@
     .md-tool { min-width: 30px; height: 28px; padding: 0 0.35rem; display: grid; place-items: center; background: transparent; border: 0; border-radius: 6px; color: var(--text-main); font-family: inherit; font-size: 0.82rem; line-height: 1; cursor: pointer; }
     .md-tool:hover { background: var(--bg-pill); }
     .md-tool:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    /* Miroir de mesure : il recopie la typographie et la largeur du champ pour
+       que la position des caractères surlignés soit calculable. Il doit être laid
+       out — donc jamais `display: none` — mais invisible et hors écran. */
+    .md-mirror { position: absolute; top: 0; left: -9999px; visibility: hidden; pointer-events: none; margin: 0; border: 0; box-sizing: content-box; white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; }
+    .md-mirror-mark { background: transparent; }
     /* `z-index: 190` est volontaire : la documentation s'ouvre en 200/201 et
        doit pouvoir recouvrir une barre restée affichée en arrière-plan. */
 

@@ -221,29 +221,93 @@
     return bar;
   }
 
-  /* La position exacte du curseur n'est pas accessible de façon fiable pour une
-     zone de texte ; on tente le point du dernier clic, et on retombe sur le bord
-     du champ plutôt que d'afficher une barre décalée. */
+  /* ---------------------------------------------------------------- mesure */
+
+  /*
+   * L'API Selection ne voit pas la sélection d'un <textarea> ou d'un <input> :
+   * le navigateur ne la considère pas comme une sélection de document, si bien
+   * que `window.getSelection()` reste vide et qu'aucune méthode ne donne le
+   * rectangle des caractères surlignés. Les API de caret (`caretRangeFromPoint`)
+   * ne comblent pas le trou : elles renvoient une plage *collapsed*, dont le
+   * rectangle est vide.
+   *
+   * On mesure donc le texte pour de vrai : le contenu du champ est recopié dans
+   * un <div> miroir hors écran, dimensionné et typé à l'identique, et un <span>
+   * encadre exactement la sélection. Les coordonnées de ce span, ramenées à
+   * l'origine du miroir puis du champ, sont celles des caractères affichés. C'est
+   * la seule façon d'obtenir la position réelle du texte sans dépendre d'une
+   * coordonnée exposée par le navigateur.
+   */
+  var mirror = null;
+  var MIRROR_PROPERTIES = [
+    'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
+    'fontStretch', 'letterSpacing', 'lineHeight', 'textTransform', 'textIndent',
+    'textAlign', 'direction', 'wordSpacing', 'tabSize', 'fontKerning',
+    'fontFeatureSettings', 'fontVariantLigatures', 'paddingTop', 'paddingRight',
+    'paddingBottom', 'paddingLeft'
+  ];
+
+  function buildMirror() {
+    if (mirror) return mirror;
+    mirror = document.createElement('div');
+    mirror.className = 'md-mirror';
+    /* `visibility` plutôt que `display: none` : un élément non affiché n'a pas de
+       boîte, donc aucune mesure ne serait possible. */
+    mirror.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(mirror);
+    return mirror;
+  }
+
+  function syncMirror(field) {
+    var style = window.getComputedStyle(field);
+    var box = buildMirror();
+    MIRROR_PROPERTIES.forEach(function (name) {
+      box.style[name] = style[name];
+    });
+    box.style.width = field.clientWidth + 'px';
+    box.style.height = field.clientHeight + 'px';
+    /* `wrap="off"` désactive le retour à la ligne : le miroir doit suivre, sinon
+       les lignes se décalent et le rectangle mesuré ne correspond plus à rien. */
+    box.style.whiteSpace = field.wrap === 'off' ? 'pre' : 'pre-wrap';
+  }
+
+  /* Rectangle de la sélection, en coordonnées de la fenêtre. `null` si la
+     mesure est impossible, et l'appelant retombe alors sur le champ entier. */
+  function selectionRect(field) {
+    var start = field.selectionStart;
+    var end = field.selectionEnd;
+    if (end <= start) return null;
+
+    var box = buildMirror();
+    syncMirror(field);
+
+    var mark = document.createElement('span');
+    mark.className = 'md-mirror-mark';
+    mark.textContent = field.value.slice(start, end);
+    box.textContent = '';
+    box.appendChild(document.createTextNode(field.value.slice(0, start)));
+    box.appendChild(mark);
+    box.appendChild(document.createTextNode(field.value.slice(end)));
+
+    var marked = mark.getBoundingClientRect();
+    if (!marked.width && !marked.height) return null;
+    var origin = box.getBoundingClientRect();
+    var fieldBox = field.getBoundingClientRect();
+    /* Le miroir part du début du texte, la fenêtre montre la partie déjà
+       défilée : le décalage du défilement est retranché, sinon la barre suivrait
+       le haut du champ au lieu du texte surligné. */
+    return {
+      top: marked.top - origin.top + fieldBox.top - field.scrollTop,
+      bottom: marked.bottom - origin.top + fieldBox.top - field.scrollTop,
+      left: marked.left - origin.left + fieldBox.left - field.scrollLeft,
+      right: marked.right - origin.left + fieldBox.left - field.scrollLeft
+    };
+  }
+
   function anchorRect() {
     var field = anchoredField;
     if (!field) return null;
-    var point = field.mdClickPoint;
-    if (point) {
-      var rect = null;
-      if (document.caretPositionFromPoint) {
-        var position = document.caretPositionFromPoint(point.x, point.y);
-        if (position && position.offsetNode && field.contains(position.offsetNode)) {
-          var range = document.createRange();
-          range.setStart(position.offsetNode, position.offset);
-          rect = range.getBoundingClientRect();
-        }
-      } else if (document.caretRangeFromPoint) {
-        var caretRange = document.caretRangeFromPoint(point.x, point.y);
-        if (caretRange && field.contains(caretRange.startContainer)) rect = caretRange.getBoundingClientRect();
-      }
-      if (rect && (rect.width || rect.height)) return rect;
-    }
-    return field.getBoundingClientRect();
+    return selectionRect(field) || field.getBoundingClientRect();
   }
 
   function position() {
@@ -254,11 +318,12 @@
     var width = bar.offsetWidth || 240;
     var height = bar.offsetHeight || 34;
     var margin = 8;
+    /* Au-dessus du texte surligné, et centré dessus comme le fait Discord. */
     var top = rect.top - height - margin;
     /* Pas de place au-dessus : on passe en dessous plutôt que de sortir de
-       l'écran, comme le fait Discord en bas d'une zone de texte. */
+       l'écran. */
     if (top < margin) top = rect.bottom + margin;
-    var left = rect.left;
+    var left = (rect.left + rect.right) / 2 - width / 2;
     if (left + width > window.innerWidth - margin) left = window.innerWidth - width - margin;
     if (left < margin) left = margin;
 
@@ -271,7 +336,24 @@
     anchoredField = field;
     bar.hidden = false;
     bar.setAttribute('aria-hidden', 'false');
+    /* Premier positionnement sans attendre : la barre ne doit pas clignoter à
+       l'ancien endroit avant d'être replacée. */
     position();
+  }
+
+  /* Mesurer la sélection force une mise en page, et `selectionchange` se répète à
+     chaque pixel de glissement. Regrouper les mesures sur la frame suivante
+     évite de recalculer une position qui sera de toute façon abandonnée. */
+  var positionFrame = 0;
+  function schedulePosition() {
+    if (positionFrame || !window.requestAnimationFrame) {
+      position();
+      return;
+    }
+    positionFrame = window.requestAnimationFrame(function () {
+      positionFrame = 0;
+      position();
+    });
   }
 
   function hide() {
@@ -296,14 +378,7 @@
       return;
     }
     if (anchoredField !== field) show(field);
-    else position();
-  }
-
-  /* Le point du dernier clic ne sert qu'à ancrer la barre : le garder au-delà
-     l'ancrerait là où l'utilisateur ne regarde plus. */
-  function rememberClickPoint(event) {
-    if (!isTextField(event.target)) return;
-    event.target.mdClickPoint = { x: event.clientX, y: event.clientY };
+    else schedulePosition();
   }
 
   function toolForKey(key) {
@@ -318,7 +393,6 @@
     buildBar();
 
     document.addEventListener('mouseup', function (event) {
-      rememberClickPoint(event);
       sync(event.target);
     }, true);
 
