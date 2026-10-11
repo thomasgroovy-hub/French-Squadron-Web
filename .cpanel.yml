@@ -1,0 +1,6 @@
+
+---
+deployment:
+  tasks:
+    - /bin/mkdir -p /home/zonecom/repositories/French-Squadron-Web/tmp
+    - /usr/bin/touch /home/zonecom/repositories/French-Squadron-Web/tmp/restart.txt
