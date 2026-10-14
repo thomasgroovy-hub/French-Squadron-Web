@@ -194,6 +194,25 @@ export function requireSupervisionAccess(req, res, next) {
   next();
 }
 
+/**
+ * True when the connected user carries the bot administration role.
+ */
+export function hasBotAdminRole(memberData) {
+  return Array.isArray(memberData?.roles) && memberData.roles.includes(webConfig.botAdminRoleId);
+}
+
+/** Server-side gate: bot administration. */
+export function requireBotAdminRole(req, res, next) {
+  if (!req.session?.user) return requireAuth(req, res, next);
+  if (!hasBotAdminRole(req.memberData)) {
+    return res.status(403).render('error', {
+      title: 'Accès réservé',
+      message: 'Cette section est réservée à l’administration du bot.',
+    });
+  }
+  next();
+}
+
 export const formsAccessMessages = Object.freeze({
   denied: DENIED_MESSAGE,
   adminDenied: ADMIN_DENIED_MESSAGE,

@@ -25,6 +25,7 @@ import {
 } from '../auth/guards.js';
 import { createFormsAdminRouter, createFormsRouter, createResponsesRouter } from './forms.js';
 import { createDocumentationRouter } from './documentation.js';
+import { hasBotAdminRole, requireBotAdminRole } from '../auth/guards.js';
 
 export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
   const router = Router();
@@ -43,6 +44,7 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       // hence the separate local for the transversal views.
       res.locals.isFormManager = canManageForms(req.memberData);
       res.locals.isFormsAdmin = hasFormsAdminRole(req.memberData);
+      res.locals.isBotAdmin = hasBotAdminRole(req.memberData);
       // Cache for Roblox data to avoid duplicate fetches per request
       req.robloxCache = new Map();
       next();
@@ -147,6 +149,12 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
   // n'y entre pas, et n'y gagne donc aucun droit nouveau.
   router.use('/administration', createFormsAdminRouter({ pool, fetchFn }));
   router.use('/documentation', createDocumentationRouter());
+
+  router.get('/administration/bot', requireAuth, requireBotAdminRole, (req, res) => {
+    res.render('bot-admin', {
+      title: 'Configuration du bot | Site-66',
+    });
+  });
 
   // A member file is reachable by the supervision role and by the comit�
   // d'�thique, which needs it to manage strikes. The tab itself is rendered

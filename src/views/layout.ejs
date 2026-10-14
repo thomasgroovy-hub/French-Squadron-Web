@@ -732,7 +732,10 @@
         <%# Onglet de supervision des formulaires : réservé aux rôles
             d'administration, qui voient tous les formulaires du site. %>
         <% if (typeof isFormsAdmin !== 'undefined' && isFormsAdmin) { %>
-          <a href="/administration/formulaires" class="nav-tab <%= currentPath.startsWith('/administration') ? 'is-active' : '' %>">Administration</a>
+          <a href="/administration/formulaires" class="nav-tab <%= currentPath === '/administration/formulaires' ? 'is-active' : '' %>">Administration (Formulaires)</a>
+        <% } %>
+        <% if (typeof isBotAdmin !== 'undefined' && isBotAdmin) { %>
+          <a href="/administration/bot" class="nav-tab <%= currentPath === '/administration/bot' ? 'is-active' : '' %>">Administration</a>
         <% } %>
         <% if ((typeof isMemberManagement !== 'undefined' && isMemberManagement) || (typeof canManageStrikes !== 'undefined' && canManageStrikes)) { %>
           <a href="/members" class="nav-tab <%= currentPath.startsWith('/members') ? 'is-active' : '' %>">Supervision</a>

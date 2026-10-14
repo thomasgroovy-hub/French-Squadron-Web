@@ -69,6 +69,8 @@ export const webConfig = {
   ),
   // Rôle pour la gestion des membres (onglet Supervision) - Permadeath, sanctions, etc.
   memberManagementRoleId: process.env.WEB_MEMBER_MANAGEMENT_ROLE_ID || '1487266203864006707',
+  // Rôle d'administration du bot (onglet Administration)
+  botAdminRoleId: process.env.WEB_BOT_ADMIN_ROLE_ID || '1518410191933014057',
   // Liens publics de la page /documentation et du footer, configurables sur
   // Railway. Repli sur « / » pour la documentation : une carte qui renvoie au
   // site vaut mieux qu'une URL cassée.
