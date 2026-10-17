@@ -1,29 +1,118 @@
+<%
+  // Libellés des sources, pour les avertissements d'intégration partielle.
+  const SOURCE_LABELS = {
+    strikes: 'les avertissements',
+    moderation_cases: 'les cas de modération',
+    moderation_bans: 'les bannissements',
+  };
+  const sourceList = (sources) => sources.map((source) => SOURCE_LABELS[source] || source).join(', ');
+
+  // `typeFilter` est normalisé côté serveur : il ne peut valoir que l'une de
+  // ces quatre valeurs, jamais une saisie brute du visiteur.
+  const TYPE_OPTIONS = [
+    { value: 'all', label: 'Toutes les actions' },
+    { value: 'warn', label: 'Avertissements' },
+    { value: 'case', label: 'Cas de modération' },
+    { value: 'ban', label: 'Bannissements' },
+  ];
+%>
 <div class="page-head">
-  <h1 class="page-title">Configuration du bot</h1>
-  <p class="muted">Gestion de l'application FPCS Discord Bot.</p>
+  <h1 class="page-title">Administration du bot</h1>
+  <p class="muted">Journal de modération de l'application FPCS Discord Bot.</p>
 </div>
 
-<div class="card" style="margin-top: 1.5rem;">
+<section class="card" style="margin-top: 1.5rem;">
   <div class="section-head">
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
     </svg>
-    <h2>À venir</h2>
+    <h2>Journal de modération</h2>
+    <span class="row-aside"><span class="badge badge-cyan"><%= total %></span></span>
   </div>
-  <p class="muted" style="font-size: 0.9rem;">
-    Ce module est en cours de développement. Il permettra prochainement de configurer les rôles d'administration et les commandes de modération du bot <code>french-squadron-utils</code> directement depuis cette interface.
-  </p>
-  <div class="empty-state" style="margin-top: 1.5rem; background: var(--bg-subtle);">
-    <div class="empty-state-icon">
-      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 8V4H8"></path>
-        <rect width="16" height="12" x="4" y="8" rx="2"></rect>
-        <path d="M2 14h2"></path>
-        <path d="M20 14h2"></path>
-        <path d="M15 13v2"></path>
-        <path d="M9 13v2"></path>
-      </svg>
+
+  <% if (failedSources.length === 3) { %>
+    <div class="notice notice-danger">
+      Le journal de modération est indisponible : aucune des tables de modération n’a pu être interrogée.
     </div>
-    <p>Le panneau de configuration n'est pas encore connecté à la base de données du bot.</p>
-  </div>
-</div>
+  <% } else if (failedSources.length) { %>
+    <%# Une table en erreur n'est jamais présentée comme vide : la liste affichée
+        est explicitement signalée comme incomplète. %>
+    <div class="notice notice-warning">
+      Journal incomplet : <%= sourceList(failedSources) %> n’ont pas pu être chargés.
+    </div>
+  <% } %>
+  <% if (truncatedSources.length) { %>
+    <div class="notice notice-warning">
+      Seuls les <%= sourceLimit %> enregistrements les plus récents de <%= sourceList(truncatedSources) %> sont affichés : le total est donc un minimum.
+    </div>
+  <% } %>
+
+  <form class="toolbar" method="get" action="/administration/bot" style="margin-top: 1.1rem; align-items: center;">
+    <label class="field-label" for="moderation-type">Type d’action</label>
+    <select class="field-input" id="moderation-type" name="type" style="width: auto;">
+      <% TYPE_OPTIONS.forEach((option) => { %>
+        <option value="<%= option.value %>"<%= typeFilter === option.value ? ' selected' : '' %>><%= option.label %></option>
+      <% }); %>
+    </select>
+    <button class="btn btn-outline btn-sm" type="submit">Filtrer</button>
+  </form>
+  <%# Le formulaire ne transporte que `type` : changer de filtre repart donc
+      toujours à la page 1, sans jamais conserver l'ancien `page`. %>
+
+  <% if (!total) { %>
+    <div class="empty-state" style="margin-top: 1.25rem;">
+      <span class="empty-state-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.5l2.4 2.4 4.6-5"/></svg>
+      </span>
+      <p><%= failedSources.length === 3
+        ? 'Le journal de modération n’a pas pu être chargé.'
+        : (failedSources.length
+          ? 'Aucun enregistrement à afficher : certaines sources n’ont pas pu être chargées.'
+          : (typeFilter === 'all' ? 'Aucun élément de modération enregistré.' : 'Aucun enregistrement ne correspond à ce filtre.')) %></p>
+    </div>
+  <% } else { %>
+    <p class="muted" style="margin: 1.1rem 0 0.6rem; font-size: 0.8rem;">
+      Affichage de <%= rangeStart %> à <%= rangeEnd %> sur <%= total %> enregistrement<%= total > 1 ? 's' : '' %>
+      · Page <%= page %> sur <%= totalPages %>
+    </p>
+
+    <div class="row-list">
+      <% entries.forEach((entry) => { %>
+        <article class="data-row">
+          <span class="row-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5"/><path d="M12 16h.01"/></svg>
+          </span>
+          <div class="row-body">
+            <div class="row-title"><%= entry.actionLabel %></div>
+            <div class="row-subtitle" style="overflow-wrap: anywhere;">
+              Cible&nbsp;: <%= entry.targetDiscordId || '—' %>
+              · Modérateur&nbsp;: <%= entry.moderatorDiscordId || '—' %>
+            </div>
+            <div class="row-subtitle" style="overflow-wrap: anywhere;">
+              Raison&nbsp;: <%= entry.reason || '—' %>
+            </div>
+            <% if (entry.guildName) { %>
+              <div class="row-subtitle" style="overflow-wrap: anywhere;">Serveur&nbsp;: <%= entry.guildName %></div>
+            <% } %>
+          </div>
+          <div class="row-aside">
+            <span class="badge badge-<%= entry.severity %>"><%= entry.actionLabel %></span>
+            <span class="row-date"><%= entry.formattedDate %></span>
+          </div>
+        </article>
+      <% }); %>
+    </div>
+
+    <% if (totalPages > 1) { %>
+      <nav class="toolbar" style="margin-top: 1rem; align-items: center;" aria-label="Pagination du journal de modération">
+        <% if (page > 1) { %>
+          <a class="btn btn-outline btn-sm" href="/administration/bot?type=<%= typeFilter %>&amp;page=<%= page - 1 %>">Page précédente</a>
+        <% } %>
+        <span class="muted" style="font-size: 0.8rem;">Page <%= page %> sur <%= totalPages %></span>
+        <% if (page < totalPages) { %>
+          <a class="btn btn-outline btn-sm" href="/administration/bot?type=<%= typeFilter %>&amp;page=<%= page + 1 %>">Page suivante</a>
+        <% } %>
+      </nav>
+    <% } %>
+  <% } %>
+</section>
