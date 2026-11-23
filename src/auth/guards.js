@@ -7,6 +7,16 @@ const DENIED_MESSAGE =
 const ADMIN_DENIED_MESSAGE =
   'Cette vue est réservée aux membres possédant un rôle d’administration des formulaires.';
 
+function hasAnyRole(memberData, roleIds) {
+  return Array.isArray(memberData?.roles)
+    && memberData.roles.some((roleId) => roleIds.includes(roleId));
+}
+
+/** True when the connected user carries a full administrator role. */
+export function hasFullAdminRole(memberData) {
+  return hasAnyRole(memberData, webConfig.fullAdminRoleIds);
+}
+
 /**
  * True when the connected user carries the forms/documentation management
  * role. This role is deliberately independent from `webConfig.targetRoleId`
@@ -49,8 +59,7 @@ export const REQUIRED_ROLE_DENIED_MESSAGE =
  * its own scope.
  */
 export function hasFormsAdminRole(memberData) {
-  return Array.isArray(memberData?.roles)
-    && memberData.roles.some((roleId) => webConfig.formsAdminRoleIds.includes(roleId));
+  return hasAnyRole(memberData, webConfig.formsAdminRoleIds);
 }
 
 /**
@@ -129,7 +138,7 @@ export function formsOwnerScope(req) {
  * (supervision tab access: permadeath, sanctions, member directory).
  */
 export function hasMemberManagementRole(memberData) {
-  return Array.isArray(memberData?.roles) && memberData.roles.includes(webConfig.memberManagementRoleId);
+  return hasAnyRole(memberData, webConfig.memberManagementRoleIds);
 }
 
 /** Server-side gate: member management routes (supervision tab). */
@@ -145,14 +154,14 @@ export function requireMemberManagementRole(req, res, next) {
 }
 
 /**
- * True when the connected user carries the "comité d'éthique" role: the one
- * that unlocks the sanctions panel on a member file. This is
- * `webConfig.targetRoleId`, deliberately independent from the member
- * management (supervision) and forms roles.
+ * True when the connected user carries the "comité d'éthique" role or a full
+ * administrator role: either unlocks the sanctions panel on a member file.
+ * The sanctions role stays independent from the member management and forms
+ * roles; only full administrators inherit every capability.
  */
 export function hasTargetRole(memberData) {
-  if (typeof memberData?.hasTargetRole === 'boolean') return memberData.hasTargetRole;
-  return Array.isArray(memberData?.roles) && memberData.roles.includes(webConfig.targetRoleId);
+  if (memberData?.hasTargetRole === true) return true;
+  return hasAnyRole(memberData, webConfig.targetRoleIds);
 }
 
 /**
@@ -198,7 +207,7 @@ export function requireSupervisionAccess(req, res, next) {
  * True when the connected user carries the bot administration role.
  */
 export function hasBotAdminRole(memberData) {
-  return Array.isArray(memberData?.roles) && memberData.roles.includes(webConfig.botAdminRoleId);
+  return hasAnyRole(memberData, webConfig.botAdminRoleIds);
 }
 
 /** Server-side gate: bot administration. */

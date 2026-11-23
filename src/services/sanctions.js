@@ -157,8 +157,8 @@ export async function updateStrikeReason(
     if (!existing) return { ok: false, error: 'not-found' };
 
     await pool.execute(
-      `UPDATE ${STRIKE_TABLE} SET raison = ? WHERE id = ?`,
-      [cleanReason, id],
+      `UPDATE ${STRIKE_TABLE} SET raison = ? WHERE id = ?${discordUserId ? ' AND discord_id = ?' : ''}`,
+      discordUserId ? [cleanReason, id, discordUserId] : [cleanReason, id],
     );
     return { ok: true, id, previousReason: existing.raison, newReason: cleanReason };
   } catch (error) {
@@ -187,8 +187,8 @@ export async function deleteStrike({ strikeId, discordUserId }, pool = getDataba
     if (!existing) return { ok: false, error: 'not-found' };
 
     const [result] = await pool.execute(
-      `DELETE FROM ${STRIKE_TABLE} WHERE id = ?`,
-      [id],
+      `DELETE FROM ${STRIKE_TABLE} WHERE id = ?${discordUserId ? ' AND discord_id = ?' : ''}`,
+      discordUserId ? [id, discordUserId] : [id],
     );
     if (!result.affectedRows) return { ok: false, error: 'not-found' };
     return { ok: true, id, previousReason: existing.raison };

@@ -86,16 +86,19 @@
               <% } %>
               <% if (form.status === 'open') { %>
                 <form action="/candidatures/<%= form.id %>/fermer" method="post">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <button type="submit" class="btn btn-outline btn-sm">Fermer</button>
                 </form>
               <% } else { %>
                 <%# « Rouvrir » réutilise la publication existante : même endpoint,
                     même cooldown côté créateur, aucune fonctionnalité dupliquée. %>
                 <form action="/candidatures/<%= form.id %>/publier" method="post">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <button type="submit" class="btn btn-outline btn-sm"><%= form.status === 'closed' ? 'Rouvrir' : 'Publier' %></button>
                 </form>
               <% } %>
-              <form action="/candidatures/<%= form.id %>/supprimer" method="post" data-confirm="Supprimer ce formulaire et toutes les candidatures qu’il a reçues ?">
+                <form action="/candidatures/<%= form.id %>/supprimer" method="post" data-confirm="Supprimer ce formulaire et toutes les candidatures qu’il a reçues ?">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <button type="submit" class="btn btn-outline btn-sm">Supprimer</button>
               </form>
             </div>

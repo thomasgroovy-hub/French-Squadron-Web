@@ -1,4 +1,5 @@
 import { webConfig } from '../config.js';
+import { hasTargetRole as canUseTargetRole } from '../auth/guards.js';
 import { recordDeath } from './deaths.js';
 
 export function getDiscordCreationDate(userId) {
@@ -265,7 +266,9 @@ export async function fetchGuildMemberRoles({
 
     const member = await response.json();
     const roles = Array.isArray(member.roles) ? member.roles : [];
-    const hasTargetRole = roles.includes(webConfig.targetRoleId);
+    // Same capability check as every server-side guard: full administrators
+    // are accepted here too, so downstream code sees a consistent flag.
+    const hasTargetRole = canUseTargetRole({ roles });
 
     const result = {
       inGuild: true,

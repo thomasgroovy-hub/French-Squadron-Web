@@ -7,13 +7,20 @@ import './helpers/env.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { sealSession } from '../src/auth/session.js';
+import { sealSession, unsealSession } from '../src/auth/session.js';
+import { deriveCsrfToken } from '../src/security/csrf.js';
 import { createApp } from '../src/server.js';
 import { webConfig } from '../src/config.js';
 import { createFakePool } from './helpers/fake-mysql.js';
 
 const FORMS_ROLE = '1532037579816570981';
-const cookie = (user) => `${webConfig.cookieName}=${sealSession({ user }, webConfig.sessionSecret)}`;
+const auth = (user) => {
+  const sealed = sealSession({ user }, webConfig.sessionSecret);
+  return {
+    cookie: `${webConfig.cookieName}=${sealed}`,
+    csrf: deriveCsrfToken(unsealSession(sealed), webConfig.sessionSecret),
+  };
+};
 
 const RECRUITER = { id: 'recruiter-1', username: 'Coordinateur06', globalName: 'Coordinateur06', avatarUrl: null };
 const CANDIDATE = { id: 'candidate-1', username: 'Pilote', globalName: 'Pilote', avatarUrl: null };
@@ -41,24 +48,98 @@ function encode(body) {
   return params.toString();
 }
 
-async function startApp() {
+async function startApp({ rankConfig = null, withRobloxLink = false } = {}) {
   const pool = createFakePool();
-  const server = http.createServer(createApp({ pool, fetchFn }));
+  const sitePool = withRobloxLink ? createFakePool() : null;
+  if (sitePool) {
+    sitePool.store.robloxLinks.push({
+      discord_user_id: CANDIDATE.id,
+      roblox_user_id: '420010',
+      roblox_username: 'Pilote',
+    });
+  }
+  const robloxRequests = [];
+  const robloxAssignments = [];
+  const routedFetch = async (url, options = {}) => {
+    const requestUrl = String(url);
+    if (requestUrl.startsWith('https://apis.roblox.com/cloud/v2/')) {
+      const parsed = new URL(requestUrl);
+      robloxRequests.push({ url: parsed, options });
+      if (parsed.pathname.endsWith('/roles')) {
+        return { ok: true, status: 200, json: async () => ({
+          groupRoles: [{ id: '420001', displayName: 'Pilote' }],
+        }) };
+      }
+      if (parsed.pathname.endsWith('/memberships')) {
+        return { ok: true, status: 200, json: async () => ({
+          groupMemberships: [{
+            path: 'groups/420100/memberships/420020',
+            user: 'users/420010',
+            role: 'groups/420100/roles/1',
+          }],
+        }) };
+      }
+      if (parsed.pathname.endsWith(':assignRole')) {
+        robloxAssignments.push({ url: parsed, options });
+        return { ok: true, status: 204, json: async () => null };
+      }
+    }
+    if (requestUrl.startsWith('https://users.roblox.com/v1/users/')) {
+      return { ok: true, status: 200, json: async () => ({ id: 420010, name: 'Pilote' }) };
+    }
+    return fetchFn(requestUrl, options);
+  };
+  const config = rankConfig ? { ...webConfig, ...rankConfig } : webConfig;
+  const server = http.createServer(createApp({ pool, sitePool, fetchFn: routedFetch, config }));
   await new Promise((resolve) => server.listen(0, resolve));
   const { port } = server.address();
 
   const call = (path, as, init = {}) => fetch(`http://localhost:${port}${path}`, {
     ...init,
-    headers: { Cookie: cookie(as), ...(init.headers || {}) },
+    headers: { Cookie: auth(as).cookie, ...(init.headers || {}) },
     redirect: 'manual',
   });
-  const post = (path, body, as = RECRUITER) => call(path, as, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: encode(body),
-  });
+  const post = (path, body, as = RECRUITER) => {
+    // One seal for both artifacts: the token is derived from the payload, so
+    // the cookie and `_csrf` must come from the very same seal.
+    const { cookie: ck, csrf } = auth(as);
+    const params = encode(body);
+    return fetch(`http://localhost:${port}${path}`, {
+      method: 'POST',
+      headers: { Cookie: ck, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params ? `${params}&_csrf=${encodeURIComponent(csrf)}` : `_csrf=${encodeURIComponent(csrf)}`,
+      redirect: 'manual',
+    });
+  };
 
-  return { pool, get: (p, as = RECRUITER) => call(p, as), post, close: () => server.close() };
+  return {
+    pool,
+    sitePool,
+    robloxRequests,
+    robloxAssignments,
+    get: (p, as = RECRUITER) => call(p, as),
+    post,
+    close: () => server.close(),
+  };
+}
+
+async function createPublishedForm(app, { requiredRoleId = '' } = {}) {
+  const created = await app.post('/candidatures', {
+    title: 'Recrutement pilote FSU',
+    description: 'Poste de pilote.',
+    granted_role_id: '',
+    required_role_id: requiredRoleId,
+    'question_id[]': [''],
+    'question_label[]': ['Pourquoi rejoignez-vous la FSU ?'],
+    'question_type[]': ['short'],
+    'question_help[]': [''],
+  });
+  assert.equal(created.status, 302);
+  const formId = app.pool.store.forms.at(-1).id;
+  const questionId = app.pool.questionsOf(formId)[0].id;
+  const published = await app.post(`/candidatures/${formId}/publier`, {});
+  assert.equal(published.status, 302);
+  return { formId, questionId };
 }
 
 test('parcours complet : créer, publier, remplir, puis accepter une candidature', async () => {
@@ -105,6 +186,7 @@ test('parcours complet : créer, publier, remplir, puis accepter une candidature
     assert.equal(responses[0].status, 'pending');
     const answers = JSON.parse(responses[0].answers);
     assert.equal(answers[String(questions[0].id)], 'Parce que la FS2 me passionne.');
+    assert.equal(answers._robloxGroupRoleId, undefined, 'an omitted optional rank remains backward compatible');
 
     // 4. Tant qu'elle est en attente, une seconde soumission est refusée.
     const duplicate = await app.post(`/candidatures/${formId}/reponses`, {
@@ -163,6 +245,98 @@ test('parcours complet : créer, publier, remplir, puis accepter une candidature
     const managerHtml = await managerList.text();
     assert.match(managerHtml, /Recrutement pilote FSU/);
     assert.match(managerHtml, new RegExp(`href="/candidatures/${formId}"`));
+  } finally {
+    app.close();
+  }
+});
+
+test('a valid optional rank is stored at submission and applied only after an authorized acceptance', async () => {
+  const app = await startApp({
+    withRobloxLink: true,
+    rankConfig: {
+      robloxGroupId: '420100',
+      robloxOpenCloudApiKey: 'mock-open-cloud-key',
+      robloxRequestableRoleIds: ['420001'],
+    },
+  });
+  try {
+    const { formId, questionId } = await createPublishedForm(app);
+    const fill = await app.get(`/candidatures/${formId}`, CANDIDATE);
+    assert.equal(fill.status, 200);
+    const fillHtml = await fill.text();
+    assert.match(fillHtml, /Quel rank donner sur le groupe \?/);
+    assert.match(fillHtml, /<option value="420001"[^>]*>Pilote<\/option>/);
+
+    const submitted = await app.post(`/candidatures/${formId}/reponses`, {
+      [`answer_${questionId}`]: 'Je souhaite rejoindre le groupe.',
+      _robloxGroupRoleId: '420001',
+    }, CANDIDATE);
+    assert.equal(submitted.status, 302);
+    const response = app.pool.store.formResponses[0];
+    assert.equal(JSON.parse(response.answers)._robloxGroupRoleId, '420001');
+    assert.equal(app.robloxAssignments.length, 0, 'a request alone must not change the Roblox role');
+
+    const unauthorizedApproval = await app.post(`/reponses/${response.id}/accepter`, {}, CANDIDATE);
+    assert.equal(unauthorizedApproval.status, 403);
+    assert.equal(response.status, 'pending');
+    assert.equal(app.robloxAssignments.length, 0);
+
+    const accepted = await app.post(`/reponses/${response.id}/accepter`, {});
+    assert.equal(accepted.status, 200);
+    assert.equal(response.status, 'accepted');
+    assert.equal(app.robloxAssignments.length, 1);
+    assert.equal(app.robloxAssignments[0].options.method, 'POST');
+    assert.deepEqual(JSON.parse(app.robloxAssignments[0].options.body), {
+      role: 'groups/420100/roles/420001',
+    });
+    assert.match(await accepted.text(), /Rank Roblox/);
+
+    const blankForm = await createPublishedForm(app);
+    const blankSubmission = await app.post(`/candidatures/${blankForm.formId}/reponses`, {
+      [`answer_${blankForm.questionId}`]: 'Je ne demande pas de rank.',
+      _robloxGroupRoleId: '',
+    }, CANDIDATE);
+    assert.equal(blankSubmission.status, 302, 'the optional rank may remain blank with Open Cloud configured');
+    const blankResponse = app.pool.store.formResponses[1];
+    assert.equal(JSON.parse(blankResponse.answers)._robloxGroupRoleId, undefined);
+    const blankAccepted = await app.post(`/reponses/${blankResponse.id}/accepter`, {});
+    assert.equal(blankAccepted.status, 200);
+    assert.equal(app.robloxAssignments.length, 1, 'blank requests do not invoke Roblox assignment');
+  } finally {
+    app.close();
+  }
+});
+
+test('a forged Roblox role ID is rejected and an applicant without the form role cannot reach the rank field', async () => {
+  const app = await startApp({
+    withRobloxLink: true,
+    rankConfig: {
+      robloxGroupId: '420100',
+      robloxOpenCloudApiKey: 'mock-open-cloud-key',
+      robloxRequestableRoleIds: ['420001'],
+    },
+  });
+  try {
+    const { formId, questionId } = await createPublishedForm(app);
+    const forged = await app.post(`/candidatures/${formId}/reponses`, {
+      [`answer_${questionId}`]: 'Je souhaite rejoindre le groupe.',
+      _robloxGroupRoleId: '420999',
+    }, CANDIDATE);
+    assert.equal(forged.status, 400);
+    assert.match(await forged.text(), /ne fait pas partie des choix autorisés/);
+    assert.equal(app.pool.store.formResponses.length, 0);
+    assert.equal(app.robloxAssignments.length, 0);
+
+    const restricted = await createPublishedForm(app, { requiredRoleId: FORMS_ROLE });
+    const deniedView = await app.get(`/candidatures/${restricted.formId}`, CANDIDATE);
+    assert.equal(deniedView.status, 403);
+    const deniedPost = await app.post(`/candidatures/${restricted.formId}/reponses`, {
+      [`answer_${restricted.questionId}`]: 'Tentative directe.',
+      _robloxGroupRoleId: '420001',
+    }, CANDIDATE);
+    assert.equal(deniedPost.status, 403);
+    assert.equal(app.pool.store.formResponses.length, 0);
+    assert.equal(app.robloxAssignments.length, 0);
   } finally {
     app.close();
   }

@@ -20,6 +20,17 @@ const DEFAULT_FORMS_ADMIN_ROLE_IDS = Object.freeze([
   '1518410191933014057',
 ]);
 
+/**
+ * Administrateurs complets : ils héritent de toutes les capacités réservées
+ * (sanctions, supervision, formulaires, réponses et administration du bot).
+ * L'identifiant historique reste toujours inclus pour ne jamais perdre ses
+ * droits, même si la variable d'environnement est partielle.
+ */
+const DEFAULT_FULL_ADMIN_ROLE_IDS = Object.freeze([
+  '1518410191933014057',
+  '1567269299989774356',
+]);
+
 function parseRoleIdList(raw, fallback) {
   const entries = (typeof raw === 'string' ? raw : '')
     .split(/[\s,]+/)
@@ -29,6 +40,36 @@ function parseRoleIdList(raw, fallback) {
     .filter((entry) => /^\d{17,20}$/.test(entry));
   const unique = [...new Set(entries)];
   return Object.freeze(unique.length ? unique : fallback);
+}
+
+function uniqueRoleIds(...lists) {
+  return Object.freeze([...new Set(lists.flat().filter(Boolean))]);
+}
+
+const fullAdminRoleIds = uniqueRoleIds(
+  parseRoleIdList(process.env.WEB_FULL_ADMIN_ROLE_IDS, DEFAULT_FULL_ADMIN_ROLE_IDS),
+  DEFAULT_FULL_ADMIN_ROLE_IDS,
+);
+
+const targetRoleId = process.env.WEB_TARGET_ROLE_ID || '1553099793532854382';
+const memberManagementRoleId = process.env.WEB_MEMBER_MANAGEMENT_ROLE_ID || '1487266203864006707';
+const botAdminRoleId = process.env.WEB_BOT_ADMIN_ROLE_ID || '1518410191933014057';
+
+const configuredFormsAdminRoleIds = parseRoleIdList(
+  process.env.WEB_FORMS_ADMIN_ROLE_IDS,
+  DEFAULT_FORMS_ADMIN_ROLE_IDS,
+);
+const configuredBotAdminRoleIds = parseRoleIdList(
+  process.env.WEB_BOT_ADMIN_ROLE_IDS,
+  [botAdminRoleId],
+);
+
+function parseRobloxRoleIdList(raw) {
+  const entries = (typeof raw === 'string' ? raw : '')
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return Object.freeze([...new Set(entries)]);
 }
 
 /**
@@ -55,22 +96,29 @@ export const webConfig = {
   redirectUri: process.env.DISCORD_REDIRECT_URI || `http://localhost:${process.env.WEB_PORT || process.env.PORT || 3000}/auth/discord/callback`,
   discordToken: process.env.DISCORD_TOKEN,
   guildId: process.env.DISCORD_GUILD_ID || '1487258655840669807',
+  // Rôles d'administration complète et leurs capacités dérivées. Les rôles
+  // historiques restent dans chaque liste : aucun droit existant n'est retiré.
+  fullAdminRoleIds,
   // Rôle donnant accès au panneau de sanctions sur la fiche profil.
-  targetRoleId: process.env.WEB_TARGET_ROLE_ID || '1553099793532854382',
+  targetRoleId,
+  targetRoleIds: uniqueRoleIds([targetRoleId], fullAdminRoleIds),
   // Rôle de gestion des candidatures et des réponses. Totalement
   // indépendant de `targetRoleId` : ni parent, ni enfant, ni substitution.
   formsRoleId: process.env.WEB_FORMS_ROLE_ID || '1532037579816570981',
   // Rôles d'administration des formulaires : accès transverse à tous les
   // formulaires et à toutes les réponses. Orthogonal à `formsRoleId`, qui reste
   // cantonné aux formulaires créés par son porteur.
-  formsAdminRoleIds: parseRoleIdList(
-    process.env.WEB_FORMS_ADMIN_ROLE_IDS,
-    DEFAULT_FORMS_ADMIN_ROLE_IDS,
-  ),
+  formsAdminRoleIds: uniqueRoleIds(configuredFormsAdminRoleIds, fullAdminRoleIds),
+  robloxGroupId: process.env.ROBLOX_GROUP_ID?.trim() || null,
+  robloxOpenCloudApiKey: process.env.ROBLOX_OPEN_CLOUD_API_KEY?.trim() || null,
+  robloxRequestableRoleIds: parseRobloxRoleIdList(process.env.ROBLOX_REQUESTABLE_ROLE_IDS),
   // Rôle pour la gestion des membres (onglet Supervision) - Permadeath, sanctions, etc.
-  memberManagementRoleId: process.env.WEB_MEMBER_MANAGEMENT_ROLE_ID || '1487266203864006707',
-  // Rôle d'administration du bot (onglet Administration)
-  botAdminRoleId: process.env.WEB_BOT_ADMIN_ROLE_ID || '1518410191933014057',
+  memberManagementRoleId,
+  memberManagementRoleIds: uniqueRoleIds([memberManagementRoleId], fullAdminRoleIds),
+  // Rôle d'administration du bot (onglet Administration). Le scalaire est
+  // conservé pour compatibilité ; les gardes utilisent la liste.
+  botAdminRoleId,
+  botAdminRoleIds: uniqueRoleIds(configuredBotAdminRoleIds, fullAdminRoleIds),
   // Liens publics de la page /documentation et du footer, configurables sur
   // Railway. Repli sur « / » pour la documentation : une carte qui renvoie au
   // site vaut mieux qu'une URL cassée.

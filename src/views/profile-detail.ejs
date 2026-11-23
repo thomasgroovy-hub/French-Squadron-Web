@@ -125,6 +125,7 @@
                       <details class="strike-tools">
                         <summary>Gérer cet avertissement</summary>
                         <form class="strike-form" method="post" action="/members/<%= discordInfo.id %>/strikes/<%= entry.strikeId %>/edit">
+                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                           <label class="strike-label" for="reason-<%= entry.strikeId %>">Raison</label>
                           <textarea class="strike-textarea" id="reason-<%= entry.strikeId %>" name="reason" rows="3" maxlength="1000" required><%= entry.reason %></textarea>
                           <div class="strike-actions">
@@ -132,6 +133,7 @@
                           </div>
                         </form>
                         <form class="strike-form" method="post" action="/members/<%= discordInfo.id %>/strikes/<%= entry.strikeId %>/remove" data-confirm="Supprimer définitivement cet avertissement ?">
+                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                           <button class="btn btn-outline btn-sm btn-danger-text" type="submit">Supprimer</button>
                         </form>
                       </details>
@@ -157,6 +159,7 @@
             <details class="strike-tools strike-add">
               <summary>Ajouter un avertissement</summary>
               <form class="strike-form" method="post" action="/members/<%= discordInfo.id %>/strikes">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <label class="strike-label" for="new-strike-reason">Raison de l’avertissement</label>
                 <textarea class="strike-textarea" id="new-strike-reason" name="reason" rows="3" maxlength="1000" required placeholder="Décrivez les faits reprochés."></textarea>
                 <div class="strike-actions">

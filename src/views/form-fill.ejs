@@ -73,7 +73,36 @@
     <div class="stack" id="form-pages" data-preview="1" style="margin-top: 1rem;">
   <% } else { %>
     <form action="/candidatures/<%= form.id %>/reponses" method="post" class="stack" id="form-pages" style="margin-top: 1rem;">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <% } %>
+    <%
+      const fieldSelectedRoleId = typeof selectedRobloxRoleId !== 'undefined'
+        ? selectedRobloxRoleId
+        : (typeof requestedRobloxRoleId !== 'undefined' ? requestedRobloxRoleId : '');
+      const availableRobloxRoles = typeof robloxGroupRoles !== 'undefined' && Array.isArray(robloxGroupRoles)
+        ? robloxGroupRoles
+        : [];
+      const canRequestRobloxRank = typeof robloxRankEnabled !== 'undefined' && robloxRankEnabled;
+      const robloxRankHelp = typeof robloxRankMessage === 'string'
+        ? robloxRankMessage
+        : 'Ce champ est facultatif. Le rank ne sera appliqué qu’après acceptation de la candidature.';
+    %>
+    <article class="card">
+      <div class="question-head">
+        <span class="question-index" aria-hidden="true">R</span>
+        <div>
+          <h2 class="question-label" id="roblox-rank-label">Quel rank donner sur le groupe ?</h2>
+          <p class="question-help" id="roblox-rank-help"><%= robloxRankHelp %></p>
+        </div>
+      </div>
+      <select class="field-input" id="roblox-group-role" name="_robloxGroupRoleId" aria-labelledby="roblox-rank-label" aria-describedby="roblox-rank-help" <%= previewMode || !canRequestRobloxRank ? 'disabled' : '' %>>
+        <option value="">Aucun rank demandé</option>
+        <% availableRobloxRoles.forEach((role) => { %>
+          <option value="<%= role.id %>" <%= fieldSelectedRoleId === role.id ? 'selected' : '' %>><%= role.name %></option>
+        <% }); %>
+      </select>
+    </article>
+
     <%# La numérotation des questions reste globale sur tout le formulaire, même
         si elle est réinitialisée à chaque page : c'est l'ordre de lecture. %>
     <% let questionNumber = 0; %>
@@ -181,7 +210,7 @@
     </form>
   <% } %>
 
-  <script>
+  <script nonce="<%= cspNonce %>">
     /* Pagination : une amélioration, pas une condition d'utilisation. Le script ne
        s'installe qu'après coup et peut donc masquer les pages sans jamais empêcher
        l'affichage de l'ensemble du formulaire. */

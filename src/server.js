@@ -7,6 +7,9 @@ import { sessionMiddleware } from './auth/session.js';
 import { createOAuthRouter } from './auth/oauth.js';
 import { createMainRouter } from './routes/index.js';
 import { createPermadeathRouter } from './routes/permadeath.js';
+import { securityHeaders } from './security/headers.js';
+import { csrfProtection } from './security/csrf.js';
+import { createRateLimiter, clientKey } from './security/rate-limit.js';
 
 import { getDatabasePool, getSiteDatabasePool, findMissingEnv } from './database.js';
 import { renderDiscordInline, renderDiscordMarkdown, stripDiscordMarkdown } from './utils/discord-markdown.js';
@@ -31,6 +34,14 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
   // Configuration du moteur de vues EJS
   app.set('views', path.join(__dirname, 'views'));
   app.set('view engine', 'ejs');
+  // Behind Railway's router the client IP lives in X-Forwarded-For; trusting
+  // exactly one hop keeps rate limits per-visitor without letting a direct
+  // client spoof its own address. Off outside production (tests, localhost).
+  app.set('trust proxy', config.isProduction ? 1 : false);
+  // `simple` drops the qs object parser: no nested objects from the query
+  // string, no prototype-pollution surface, arrays only for repeated keys.
+  app.set('query parser', 'simple');
+  app.disable('x-powered-by');
 
   // Markdown helper, shared by every view. The function escapes the text it is
   // given, so views must print its result unescaped.
@@ -43,6 +54,10 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
   app.locals.stripDiscordMarkdown = stripDiscordMarkdown;
   // Shown in the footer: a user reporting a bug can name the build they see.
   app.locals.siteVersion = SITE_VERSION;
+
+  // Security headers first: every response, including static assets, gets the
+  // policy and the CSP nonce stored in res.locals for the views.
+  app.use(securityHeaders({ isProduction: config.isProduction }));
 
   // Middleware pour envelopper automatiquement les vues dans layout.ejs
   app.use((req, res, next) => {
@@ -79,15 +94,67 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
 
   // Middlewares généraux
   app.use(cookieParser());
-  app.use(express.urlencoded({ extended: true }));
-  app.use(express.json());
+  // Body limits: a form POST is well under 500kb, JSON payloads (embeds,
+  // webhooks) under 64kb. Anything larger is abuse, not a feature.
+  app.use(express.urlencoded({ extended: true, limit: '500kb' }));
+  app.use(express.json({
+    limit: '64kb',
+    // Exact request bytes, needed by the webhook HMAC: re-serializing
+    // req.body would recompute a signature over a different string.
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString('utf8');
+    },
+  }));
   app.use(sessionMiddleware());
   app.use(express.static(path.join(__dirname, 'public')));
 
+  // Rate limits, differentiated by attack surface. Mounted before the routers
+  // so a request is counted (and possibly rejected) before any route runs.
+  app.use(createRateLimiter({
+    windowMs: 60_000,
+    max: 600,
+    keyFn: clientKey,
+    message: 'Trop de requêtes. Patientez une minute puis réessayez.',
+  }));
+  app.use('/auth', createRateLimiter({
+    windowMs: 15 * 60_000,
+    max: 60,
+    keyFn: clientKey,
+    message: 'Trop de tentatives de connexion. Patientez quelques minutes puis réessayez.',
+  }));
+  app.use('/v1/roblox', createRateLimiter({
+    windowMs: 60_000,
+    max: 60,
+    keyFn: (req) => req.ip || 'unknown',
+    message: 'Rate limit exceeded',
+  }));
+  app.use('/candidatures', createRateLimiter({
+    windowMs: 5 * 60_000,
+    max: 200,
+    keyFn: clientKey,
+    message: 'Trop de requêtes sur les candidatures. Patientez puis réessayez.',
+  }));
+  app.use('/reponses', createRateLimiter({
+    windowMs: 5 * 60_000,
+    max: 200,
+    keyFn: clientKey,
+    message: 'Trop de requêtes sur les réponses. Patientez puis réessayez.',
+  }));
+  app.use('/members', createRateLimiter({
+    windowMs: 5 * 60_000,
+    max: 200,
+    keyFn: clientKey,
+    message: 'Trop de requêtes sur les fiches membres. Patientez puis réessayez.',
+  }));
+
+  // CSRF: every mutating request outside the HMAC-signed webhook must carry
+  // the session-bound token (hidden form field or x-csrf-token header).
+  app.use(csrfProtection());
+
   // Montage des routeurs
   app.use('/auth', createOAuthRouter({ config, fetchFn, pool }));
-  app.use('/', createMainRouter({ pool, sitePool, fetchFn }));
-  app.use('/', createPermadeathRouter({ pool }));
+  app.use('/', createMainRouter({ pool, sitePool, fetchFn, config }));
+  app.use('/', createPermadeathRouter({ pool, config, fetchFn }));
   
 
   // Gestion des pages non trouvées (404)
@@ -107,10 +174,19 @@ export function createApp({ pool, sitePool, fetchFn, config = webConfig } = {}) 
     // qui coupe la connexion. Sans cette garde, le rendu de la page
     // d'erreur pouvait rester bloqué jusqu'au timeout du load balancer (502).
     if (res.headersSent) return next(err);
-    const status = Number.isInteger(err?.status) ? err.status : 500;
+    const status = Number.isInteger(err?.status) ? err.status : (Number.isInteger(err?.statusCode) ? err.statusCode : 500);
+    // Body-parser failures carry their own status: report them precisely so a
+    // rejected oversized payload does not look like an internal crash, while
+    // everything else stays a generic message (no stack, no SQL, no secrets).
+    const messages = {
+      413: 'La requête est trop volumineuse. Réduisez la taille des données envoyées.',
+      400: 'La requête est malformée.',
+    };
     res.status(status).render('error', {
-      title: 'Erreur interne du serveur',
-      message: 'Une erreur inattendue est survenue lors du traitement de la requête.',
+      title: status === 413 ? 'Requête trop volumineuse (413)' : `Erreur ${status}`,
+      message: messages[status] || (status >= 500
+        ? 'Une erreur inattendue est survenue lors du traitement de la requête.'
+        : 'La requête n’a pas pu être traitée.'),
     });
   });
 

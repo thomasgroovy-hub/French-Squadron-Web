@@ -35,7 +35,13 @@ cp .env.example .env
 | `DISCORD_GUILD_ID` | ID du serveur Discord (défaut : French Squadron) |
 | `WEB_TARGET_ROLE_ID` | Rôle donnant accès au panneau de sanctions sur une fiche profil |
 | `WEB_FORMS_ROLE_ID` | Rôle de gestion des candidatures et des réponses |
+| `WEB_FORMS_ADMIN_ROLE_IDS` | Rôles d'administration transverse des formulaires et des réponses ; les administrateurs complets y sont toujours inclus |
+| `WEB_FULL_ADMIN_ROLE_IDS` | Rôles d'administration complète : sanctions, supervision, formulaires, réponses et administration du bot |
+| `WEB_BOT_ADMIN_ROLE_ID` | Rôle historique de l'onglet Administration du bot (les administrateurs complets l'obtiennent aussi) |
 | `WEB_FORMS_PUBLISH_COOLDOWN_MINUTES` | Délai minimum entre deux publications d'un même créateur |
+| `ROBLOX_GROUP_ID` | Groupe Roblox cible des demandes de rank (facultatif) |
+| `ROBLOX_OPEN_CLOUD_API_KEY` | Clé Open Cloud limitée à `group:read` et `group:write` pour ce groupe (facultatif, secret) |
+| `ROBLOX_REQUESTABLE_ROLE_IDS` | Liste séparée par virgules des identifiants de rôles Roblox autorisés (facultatif, aucun rôle n'est autorisé par défaut) |
 | `DOCUMENTATION_ETHICS_URL` | Lien public de la carte « Charte éthique » de `/documentation` |
 | `DOCUMENTATION_FACILITY_URL` | Lien public de la carte « Charte de l'installation » de `/documentation` |
 | `DISCORD_URL` | Invitation Discord, utilisée par la carte Discord de `/documentation` et par le footer |
@@ -56,11 +62,42 @@ La page `/documentation` est publique : elle ne lit rien en base et se contente 
 
 ## Rôles
 
-Trois rôles totalement indépendants, sans hiérarchie entre eux :
+Trois rôles de base restent indépendants :
 
 - `WEB_TARGET_ROLE_ID` : lecture du dossier de sanctions sur **sa propre** fiche profil.
 - `WEB_FORMS_ROLE_ID` : création et gestion des formulaires, traitement des réponses.
 - `WEB_MEMBER_MANAGEMENT_ROLE_ID` : onglet Supervision (`/members`) — annuaire des membres, historique Deaths et sanctions des autres fiches.
+
+Les rôles de `WEB_FULL_ADMIN_ROLE_IDS` héritent de **toutes** ces capacités, ainsi que de l'administration transverse des formulaires (`WEB_FORMS_ADMIN_ROLE_IDS`) et du journal du bot (`/administration/bot`). L'identifiant historique `1518410191933014057` et le nouvel identifiant `1567269299989774356` sont toujours administrateurs complets, même si la variable d'environnement est partielle.
+
+### Demandes de rank Roblox
+
+Le champ de rank reste facultatif. Il n'est proposé qu'avec une liaison Roblox
+vérifiée, une configuration Open Cloud complète et des rôles autorisés qui
+existent encore dans le groupe. La demande est enregistrée avec les réponses,
+mais n'applique aucun changement à la soumission. Seule l'acceptation d'une
+candidature par un utilisateur ayant déjà accès à « Réponses » tente
+l'attribution; le site revalide le rôle, le compte Roblox lié et l'adhésion au
+groupe. Roblox applique également sa propre hiérarchie de rôles.
+
+Pour l'activer :
+
+1. Renseigner `ROBLOX_GROUP_ID` avec l'identifiant du groupe.
+2. Créer une clé Open Cloud autorisée uniquement pour ce groupe, avec les
+   permissions minimales `group:read` et `group:write`. Conserver la clé dans
+   l'environnement de déploiement sous `ROBLOX_OPEN_CLOUD_API_KEY`; ne jamais
+   l'ajouter au dépôt.
+3. Récupérer les identifiants réels depuis
+   `GET https://apis.roblox.com/cloud/v2/groups/{group_id}/roles`, puis définir
+   `ROBLOX_REQUESTABLE_ROLE_IDS` avec les identifiants que l'équipe peut
+   effectivement attribuer. Ne pas inclure les rôles privilégiés ou le rôle
+   propriétaire.
+4. Configurer `SITE_MYSQL_*` afin que le site puisse vérifier la liaison
+   répliquée par le bot, puis redémarrer le service.
+
+Une clé absente, des permissions insuffisantes, une liaison manquante ou un
+échec Roblox n'accordent aucun rôle; le site journalise l'échec sans afficher
+ni enregistrer la clé. Une candidature sans rank demandé suit le flux actuel.
 
 ## Démarrage
 

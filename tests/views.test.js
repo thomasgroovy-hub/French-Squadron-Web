@@ -17,6 +17,10 @@ const base = {
   isStaff: false,
   isFormManager: true,
   webConfig: { discordUrl: webConfig.discordUrl },
+  // Published by sessionMiddleware/securityHeaders on every real request;
+  // mirrored here so direct EJS renders see the same variables.
+  csrfToken: 'test-csrf-token',
+  cspNonce: 'test-nonce',
 };
 
 const form = {

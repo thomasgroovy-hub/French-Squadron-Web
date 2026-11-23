@@ -14,10 +14,12 @@ export function createApplicationAcceptedPayload({
   formTitle = null,
   applicantName = null,
   grantedRoleName = null,
+  robloxGroupRoleName = null,
 } = {}) {
   const sections = [];
   if (formTitle) sections.push(`**Formulaire**\n${formTitle}`);
   if (grantedRoleName) sections.push(`**Rôle attribué**\n${grantedRoleName}`);
+  if (robloxGroupRoleName) sections.push(`**Rank Roblox du groupe**\n${robloxGroupRoleName}`);
   if (applicantName) sections.push(`**Candidat**\n${applicantName}`);
 
   return createV2Message({

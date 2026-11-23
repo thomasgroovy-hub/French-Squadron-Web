@@ -81,6 +81,32 @@
         <% } %>
       </article>
     <% }); %>
+    <% if (response.requestedRobloxRoleId) { %>
+      <article class="answer-block">
+        <div class="answer-label">
+          <span class="question-index" aria-hidden="true">R</span>
+          <div class="question-label" style="margin: 0;">Quel rank donner sur le groupe ?</div>
+        </div>
+        <p class="answer-value">
+          <% if (response.requestedRobloxRoleName) { %>
+            <%= response.requestedRobloxRoleName %>
+          <% } else { %>
+            <span class="pill-mono"><%= response.requestedRobloxRoleId %></span>
+          <% } %>
+        </p>
+        <% if (response.status === 'pending') { %>
+          <p class="muted">Demande facultative : aucune modification Roblox ne sera effectuée avant l’acceptation.</p>
+        <% } else if (response.status === 'rejected') { %>
+          <p class="muted">Candidature refusée : aucun rank Roblox n’a été attribué.</p>
+        <% } else if (response.robloxRankAssignmentStatus === 'failed') { %>
+          <p class="muted">Candidature acceptée, mais l’attribution Roblox a échoué. Consultez les journaux du site.</p>
+        <% } else if (response.robloxRankAssignmentStatus === 'assigned' || response.robloxRankAssignmentStatus === 'already-assigned') { %>
+          <p class="muted">Candidature acceptée. Rank Roblox : <%= response.robloxRankAssignmentStatus === 'assigned' ? 'attribué' : 'déjà présent' %>.</p>
+        <% } else { %>
+          <p class="muted">Candidature acceptée. L’état de l’attribution Roblox n’est pas disponible dans cette vue.</p>
+        <% } %>
+      </article>
+    <% } %>
   </div>
 </section>
 
@@ -109,17 +135,23 @@
       <h2>Décision</h2>
     </div>
     <p class="muted">
-      <% if (response.grantedRoleId) { %>
+      <% if (response.grantedRoleId && response.requestedRobloxRoleId) { %>
+        L’acceptation ajoutera le rôle Discord <span class="pill-mono"><%= response.grantedRoleId %></span>, tentera d’attribuer le rank Roblox demandé après vérification, puis enverra un message privé.
+      <% } else if (response.grantedRoleId) { %>
         L’acceptation ajoutera automatiquement le rôle <span class="pill-mono"><%= response.grantedRoleId %></span> au candidat puis lui enverra un message privé.
+      <% } else if (response.requestedRobloxRoleId) { %>
+        L’acceptation tentera d’attribuer le rank Roblox demandé après vérification du compte lié et de son appartenance au groupe, puis enverra un message privé.
       <% } else { %>
         Ce formulaire n’accorde aucun rôle : l’acceptation enverra uniquement un message privé au candidat.
       <% } %>
     </p>
     <div class="row-aside toolbar" style="justify-content: flex-end; margin-top: 1rem;">
       <form action="/reponses/<%= response.id %>/refuser" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <button type="submit" class="btn btn-outline">Refuser</button>
       </form>
       <form action="/reponses/<%= response.id %>/accepter" method="post">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <button type="submit" class="btn btn-discord">Accepter</button>
       </form>
     </div>

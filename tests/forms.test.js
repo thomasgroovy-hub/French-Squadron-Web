@@ -2,7 +2,8 @@ import './helpers/env.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { sealSession } from '../src/auth/session.js';
+import { sealSession, unsealSession } from '../src/auth/session.js';
+import { deriveCsrfToken } from '../src/security/csrf.js';
 import { hasFormsRole, formsAccessMessages } from '../src/auth/guards.js';
 import { createApplicationAcceptedPayload, BOT_ACCENT_COLOR } from '../src/services/embeds.js';
 import { FORBIDDEN_GRANTABLE_ROLE_IDS, grantGuildMemberRole, invalidateGuildRoleCache, sendDirectMessage } from '../src/services/discord.js';
@@ -37,8 +38,33 @@ function sessionFor(user) {
   return sealSession({ user }, webConfig.sessionSecret);
 }
 
+/**
+ * One seal per user, kept for the whole file: the CSRF token is derived from
+ * the sealed payload, so the cookie and the token must come from the same seal.
+ */
+const authCache = new Map();
+function authFor(user) {
+  let entry = authCache.get(user.id);
+  if (!entry) {
+    const sealed = sessionFor(user);
+    entry = {
+      cookie: `${webConfig.cookieName}=${sealed}`,
+      csrf: deriveCsrfToken(unsealSession(sealed), webConfig.sessionSecret),
+    };
+    authCache.set(user.id, entry);
+  }
+  return entry;
+}
+
 function cookieFor(user) {
-  return `${webConfig.cookieName}=${sessionFor(user)}`;
+  return authFor(user).cookie;
+}
+
+/** Adds the session-bound CSRF token to a urlencoded POST body. */
+function withCsrf(fields, user) {
+  const params = new URLSearchParams(fields);
+  params.set('_csrf', authFor(user).csrf);
+  return params.toString();
 }
 
 /** Discord stub: member roles plus a DM channel that always succeeds. */
@@ -103,7 +129,7 @@ function postBuilder(port, fields) {
       Cookie: cookieFor(FORMS_MANAGER),
       'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: new URLSearchParams(fields).toString(),
+    body: withCsrf(fields, FORMS_MANAGER),
     redirect: 'manual',
   });
 }
@@ -116,7 +142,7 @@ function postGoogleImport(port, fields, user = FORMS_MANAGER) {
       Cookie: cookieFor(user),
       'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: new URLSearchParams(fields).toString(),
+    body: withCsrf(fields, user),
     redirect: 'manual',
   });
 }
@@ -335,7 +361,7 @@ test('forms write routes are gated on the server, not only hidden in the markup'
           Cookie: cookieFor(APPLICANT),
           'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: new URLSearchParams(body).toString(),
+        body: withCsrf(body, APPLICANT),
         redirect: 'manual',
       });
       assert.equal(res.status, 403, `${path} must be refused without the forms role`);
@@ -417,12 +443,12 @@ test('a forbidden role posted by hand is refused, not silently stored', async ()
           Cookie: cookieFor(FORMS_MANAGER),
           'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: new URLSearchParams({
+        body: withCsrf({
           title: 'Recrutement',
           granted_role_id: forbiddenId,
           'question_label[]': 'Motivation',
           'question_type[]': 'short',
-        }).toString(),
+        }, FORMS_MANAGER),
         redirect: 'manual',
       });
 
@@ -484,12 +510,12 @@ test('an allowed role is still saved through the select', async () => {
         Cookie: cookieFor(FORMS_MANAGER),
         'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: new URLSearchParams({
+      body: withCsrf({
         title: 'Recrutement',
         granted_role_id: PILOT_ROLE,
         'question_label[]': 'Motivation',
         'question_type[]': 'short',
-      }).toString(),
+      }, FORMS_MANAGER),
       redirect: 'manual',
     });
 
@@ -528,8 +554,12 @@ test('the builder stays usable when the guild roles cannot be loaded', async () 
   }
 });
 
-test('FORBIDDEN_GRANTABLE_ROLE_IDS lists exactly the two protected roles', () => {
-  assert.deepEqual([...FORBIDDEN_GRANTABLE_ROLE_IDS].sort(), [FORBIDDEN_ROLE_A, FORBIDDEN_ROLE_B].sort());
+test('FORBIDDEN_GRANTABLE_ROLE_IDS includes protected and administrator roles', () => {
+  const expected = [FORBIDDEN_ROLE_A, FORBIDDEN_ROLE_B, ...webConfig.formsAdminRoleIds];
+  assert.deepEqual(
+    [...FORBIDDEN_GRANTABLE_ROLE_IDS].sort(),
+    [...new Set(expected)].sort(),
+  );
 });
 
 test('the Google import pre-fills the builder without writing anything', async () => {
@@ -704,7 +734,7 @@ test('documentation blocks reject anything but absolute http(s) URLs', async () 
           Cookie: cookieFor(FORMS_MANAGER),
           'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: new URLSearchParams({ block_type: 'link', title: 'Docs', url }).toString(),
+        body: withCsrf({ block_type: 'link', title: 'Docs', url }, FORMS_MANAGER),
         redirect: 'manual',
       });
 

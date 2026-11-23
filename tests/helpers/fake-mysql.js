@@ -54,6 +54,18 @@ class FakeMysqlPool {
     if (/^CREATE TABLE/i.test(sql)) return [[]];
     if (/^ALTER TABLE/i.test(sql)) return [[]];
 
+    if (/^SHOW COLUMNS FROM forms/i.test(sql)) {
+      return [[
+        { Field: 'id' },
+        { Field: 'creator_discord_id' },
+        { Field: 'title' },
+        { Field: 'description' },
+        { Field: 'granted_role_id' },
+        { Field: 'required_role_id' },
+        { Field: 'status' },
+      ]];
+    }
+
     // The forms bootstrap inspects the columns of an already-created table to
     // add `options` in place. The in-memory schema always has it.
     if (/^SHOW COLUMNS FROM form_questions/i.test(sql)) {
@@ -70,14 +82,15 @@ class FakeMysqlPool {
     }
 
     // ------------------------------------------------------------------ forms
-    if (/^INSERT INTO forms \(creator_discord_id, title, description, granted_role_id\)/i.test(sql)) {
-      const [creator, title, description, grantedRoleId] = params;
+    if (/^INSERT INTO forms \(creator_discord_id, title, description, granted_role_id, required_role_id\)/i.test(sql)) {
+      const [creator, title, description, grantedRoleId, requiredRoleId] = params;
       const row = {
         id: this.nextId('forms'),
         creator_discord_id: creator,
         title,
         description,
         granted_role_id: grantedRoleId,
+        required_role_id: requiredRoleId,
         status: 'draft',
         published_at: null,
         created_at: this.clock(),
@@ -117,13 +130,19 @@ class FakeMysqlPool {
 
     if (/^UPDATE forms SET title = \?/i.test(sql)) {
       const scoped = /AND forms\.creator_discord_id = \?/i.test(sql);
-      const [title, description, grantedRoleId, formId] = params;
-      const creator = scoped ? params[4] : undefined;
+      const [title, description, grantedRoleId, requiredRoleId, formId] = params;
+      const creator = scoped ? params[5] : undefined;
       const form = scoped
         ? this.store.forms.find((row) => row.id === Number(formId) && row.creator_discord_id === creator)
         : this.store.forms.find((row) => row.id === Number(formId));
       if (!form) return [{ affectedRows: 0 }];
-      Object.assign(form, { title, description, granted_role_id: grantedRoleId, updated_at: this.clock() });
+      Object.assign(form, {
+        title,
+        description,
+        granted_role_id: grantedRoleId,
+        required_role_id: requiredRoleId,
+        updated_at: this.clock(),
+      });
       return [{ affectedRows: 1 }];
     }
 
@@ -185,11 +204,17 @@ class FakeMysqlPool {
     }
 
     // --------------------------------------------------------- form_questions
-    if (/^SELECT id, form_id, position, label, help_text, field_type(, options)? FROM form_questions/i.test(sql)) {
+    if (/^SELECT id, form_id, position, label, help_text, field_type.* FROM form_questions/i.test(sql)) {
       const rows = this.store.formQuestions
         .filter((row) => row.form_id === Number(params[0]))
         .sort((a, b) => a.position - b.position || a.id - b.id)
-        .map((row) => ({ options: null, ...row }));
+        .map((row) => ({
+          options: null,
+          image_url: null,
+          page_position: 0,
+          page_title: null,
+          ...row,
+        }));
       return [rows];
     }
 
@@ -200,7 +225,7 @@ class FakeMysqlPool {
     }
 
     if (/^INSERT INTO form_questions/i.test(sql)) {
-      const [formId, position, label, helpText, fieldType, options] = params;
+      const [formId, position, label, helpText, fieldType, options, imageUrl, pagePosition, pageTitle] = params;
       const row = {
         id: this.nextId('form_questions'),
         form_id: Number(formId),
@@ -209,6 +234,9 @@ class FakeMysqlPool {
         help_text: helpText,
         field_type: fieldType,
         options: options ?? null,
+        image_url: imageUrl ?? null,
+        page_position: pagePosition ?? 0,
+        page_title: pageTitle ?? null,
         created_at: this.clock(),
         updated_at: this.clock(),
       };
@@ -217,11 +245,19 @@ class FakeMysqlPool {
     }
 
     if (/^UPDATE form_questions SET position/i.test(sql)) {
-      const [position, label, helpText, fieldType, options, questionId, formId] = params;
+      const [position, label, helpText, fieldType, options, imageUrl, pagePosition, pageTitle, questionId, formId] = params;
       const row = this.store.formQuestions.find((q) => q.id === Number(questionId) && q.form_id === Number(formId));
       if (!row) return [{ affectedRows: 0 }];
       Object.assign(row, {
-        position, label, help_text: helpText, field_type: fieldType, options: options ?? null, updated_at: this.clock(),
+        position,
+        label,
+        help_text: helpText,
+        field_type: fieldType,
+        options: options ?? null,
+        image_url: imageUrl ?? null,
+        page_position: pagePosition ?? 0,
+        page_title: pageTitle ?? null,
+        updated_at: this.clock(),
       });
       return [{ affectedRows: 1 }];
     }

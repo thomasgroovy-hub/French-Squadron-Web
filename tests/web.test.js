@@ -12,7 +12,14 @@ import {
 import { getLinkedRobloxData } from '../src/services/roblox.js';
 import { fetchMemberSanctions, createStrike, updateStrikeReason, deleteStrike } from '../src/services/sanctions.js';
 import { recordStrikeEvent, ensureStrikeEventsTable, STRIKE_ACTIONS } from '../src/services/strike-events.js';
-import { hasTargetRole, hasSupervisionAccess } from '../src/auth/guards.js';
+import {
+  hasBotAdminRole,
+  hasFormsAdminRole,
+  hasFullAdminRole,
+  hasMemberManagementRole,
+  hasSupervisionAccess,
+  hasTargetRole,
+} from '../src/auth/guards.js';
 import { recordSiteLogin } from '../src/services/members.js';
 import { getRoleLabels } from '../src/config/roles.js';
 import { createApp } from '../src/server.js';
@@ -457,6 +464,38 @@ test('hasTargetRole reads the committee flag, and supervision accepts either rol
   assert.equal(hasSupervisionAccess({ hasTargetRole: false, roles: ['someone-else'] }), false);
 });
 
+test('full administrator roles carry every administrator capability', () => {
+  const historicalAdminRoleId = '1518410191933014057';
+  const newAdminRoleId = '1567269299989774356';
+
+  assert.ok(webConfig.fullAdminRoleIds.includes(historicalAdminRoleId));
+  assert.ok(webConfig.fullAdminRoleIds.includes(newAdminRoleId));
+
+  for (const roleId of [historicalAdminRoleId, newAdminRoleId]) {
+    const memberData = { roles: [roleId] };
+    assert.equal(hasFullAdminRole(memberData), true, `${roleId} must be a full administrator`);
+    assert.equal(hasTargetRole(memberData), true, `${roleId} must manage sanctions`);
+    assert.equal(hasMemberManagementRole(memberData), true, `${roleId} must access supervision`);
+    assert.equal(hasSupervisionAccess(memberData), true, `${roleId} must open member files`);
+    assert.equal(hasFormsAdminRole(memberData), true, `${roleId} must manage every form`);
+    assert.equal(hasBotAdminRole(memberData), true, `${roleId} must access bot administration`);
+  }
+});
+
+test('fetchGuildMemberRoles marks a full administrator as target-role staff', async () => {
+  const result = await fetchGuildMemberRoles({
+    userId: 'full-admin-user',
+    botToken: 'bot-token',
+    fetchFn: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ roles: ['1567269299989774356'] }),
+    }),
+  });
+  assert.equal(result.roles.includes('1567269299989774356'), true);
+  assert.equal(result.hasTargetRole, true);
+});
+
 test('role mapping returns every configured grade in role order', () => {  assert.deepEqual(getRoleLabels([
     '1487264228342497384',
     '1487266203864006707',
@@ -560,7 +599,7 @@ test('web server /auth/discord/callback handles successful token exchange and cr
       return {
         ok: true,
         json: async () => ({
-          id: '123456789',
+          id: '123456789012345678',
           username: 'TestDiscordUser',
           global_name: 'Test Display Name',
           avatar: 'abcdef123456',
@@ -982,6 +1021,47 @@ test('staff can open a read-only profile and sanctions for a previously logged i
     assert.match(html, /MemberRoblox/);
     assert.match(html, /Historique staff/);
     assert.match(html, /Retour à la supervision/);
+  } finally {
+    server.close();
+  }
+});
+
+test('a full administrator passes the server-side supervision and bot-admin gates', async () => {
+  const adminSession = sealSession({
+    user: { id: 'full-admin', username: 'FullAdmin', globalName: 'Full Admin', avatarUrl: null },
+  }, webConfig.sessionSecret);
+  const pool = { execute: async () => [[]] };
+  const fakeFetch = async (url) => {
+    if (url.endsWith('/full-admin')) {
+      return { ok: true, status: 200, json: async () => ({ roles: ['1567269299989774356'] }) };
+    }
+    if (url.endsWith('/outsider')) {
+      return { ok: true, status: 200, json: async () => ({ roles: [] }) };
+    }
+    return { ok: false, status: 404 };
+  };
+  const app = createApp({ pool, sitePool: null, fetchFn: fakeFetch });
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+  const base = `http://localhost:${server.address().port}`;
+
+  try {
+    for (const path of ['/members', '/administration/bot']) {
+      const allowed = await fetch(`${base}${path}`, {
+        headers: { Cookie: `${webConfig.cookieName}=${adminSession}` },
+        redirect: 'manual',
+      });
+      assert.equal(allowed.status, 200, `${path} must open for a full administrator`);
+    }
+
+    const outsiderSession = sealSession({
+      user: { id: 'outsider', username: 'Outsider' },
+    }, webConfig.sessionSecret);
+    const denied = await fetch(`${base}/administration/bot`, {
+      headers: { Cookie: `${webConfig.cookieName}=${outsiderSession}` },
+      redirect: 'manual',
+    });
+    assert.equal(denied.status, 403, 'the bot log stays closed to non-administrators');
   } finally {
     server.close();
   }

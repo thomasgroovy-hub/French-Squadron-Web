@@ -53,9 +53,17 @@ import {
 } from '../services/discord.js';
 import { fetchSiteUser, fetchSiteUsersByIds } from '../services/members.js';
 import { createApplicationAcceptedPayload } from '../services/embeds.js';
+import {
+  applyRequestedRobloxGroupRole,
+  getRequestableRobloxGroupRoles,
+  getVerifiedRobloxLink,
+  RobloxGroupConfigurationError,
+} from '../services/roblox-group-ranks.js';
 
 const MAX_QUESTIONS = 20;
 const MAX_ANSWER_LENGTH = 4000;
+const ROBLOX_RANK_ANSWER_KEY = '_robloxGroupRoleId';
+const ROBLOX_ROLE_ID_PATTERN = /^\d{1,20}$/;
 
 /** The builder posts `move=up:<questionId>` / `move=down:<questionId>`. */
 const MOVE_DIRECTIONS = Object.freeze({ up: -1, down: 1 });
@@ -585,7 +593,7 @@ export async function parseGoogleForm({ fetchFn = fetch, url } = {}) {
 
   let html;
   // `AbortSignal.timeout` laisserait un minuteur actif pendant dix secondes
-  // après chaque import : on le coupe dès la réponse pour ne rien retenir.
+  // après chaque import : on le coupe dès la réponse pour rien retenir.
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
@@ -598,7 +606,22 @@ export async function parseGoogleForm({ fetchFn = fetch, url } = {}) {
         error: `Google a répondu ${response.status}. Vérifiez que le formulaire est bien public (accessible sans connexion).`,
       };
     }
+    // `fetch` suit les redirections : la vérification d'hôtesse doit porter sur
+    // l'URL finale, sinon un renvoi Google vers une machine interne passerait.
+    const finalUrl = response.url ? new URL(response.url) : null;
+    const finalIsGoogle = finalUrl && (
+      /(^|\.)forms\.gle$/.test(finalUrl.hostname)
+      || (finalUrl.hostname === 'docs.google.com' && finalUrl.pathname.includes('/forms/'))
+    );
+    if (finalUrl && !finalIsGoogle) {
+      return { error: 'Cette URL ne redirige pas vers Google Forms.' };
+    }
     html = await response.text();
+    // Page piégée ou réponse corrompue : au-delà de 3 Mo on coupe, l'import
+    // n'a jamais besoin de davantage.
+    if (html.length > 3_000_000) {
+      return { error: 'La page du formulaire est trop volumineuse pour être importée.' };
+    }
   } catch (error) {
     const reason = controller.signal.aborted ? 'délai dépassé' : error.message;
     return { error: `Impossible de joindre Google Forms (${reason}). Réessayez dans un instant.` };
@@ -947,11 +970,129 @@ function describeResponse(response) {
   };
 }
 
+async function loadRobloxRankField({
+  discordUserId,
+  sitePool,
+  config,
+  fetchFn,
+  preview = false,
+} = {}) {
+  let roles;
+  try {
+    roles = await getRequestableRobloxGroupRoles({ config, fetchFn });
+  } catch (error) {
+    if (!(error instanceof RobloxGroupConfigurationError)) {
+      console.warn('[WebRoutes] Unable to load Roblox group roles:', error.message);
+    }
+    return {
+      robloxGroupRoles: [],
+      robloxRankEnabled: false,
+      robloxRankMessage: error instanceof RobloxGroupConfigurationError
+        ? 'La demande de rank Roblox n’est pas encore configurée.'
+        : 'Les ranks Roblox sont indisponibles pour le moment.',
+    };
+  }
+
+  if (preview) {
+    return {
+      robloxGroupRoles: roles,
+      robloxRankEnabled: true,
+      robloxRankMessage: 'Ce champ est facultatif. Le rank ne sera demandé qu’à la soumission réelle.',
+    };
+  }
+
+  try {
+    const link = await getVerifiedRobloxLink(discordUserId, { sitePool });
+    if (!link) {
+      return {
+        robloxGroupRoles: roles,
+        robloxRankEnabled: false,
+        robloxRankMessage: 'Associez d’abord un compte Roblox vérifié via le bot Discord.',
+      };
+    }
+  } catch (error) {
+    console.error('[WebRoutes] Unable to verify the applicant Roblox link:', error.message);
+    return {
+      robloxGroupRoles: roles,
+      robloxRankEnabled: false,
+      robloxRankMessage: 'La liaison Roblox ne peut pas être vérifiée pour le moment.',
+    };
+  }
+
+  return {
+    robloxGroupRoles: roles,
+    robloxRankEnabled: true,
+    robloxRankMessage: 'Ce champ est facultatif. Le rank ne sera appliqué qu’après acceptation de la candidature.',
+  };
+}
+
+async function validateRequestedRobloxRole({
+  roleId,
+  discordUserId,
+  sitePool,
+  config,
+  fetchFn,
+} = {}) {
+  if (typeof roleId !== 'string' || !ROBLOX_ROLE_ID_PATTERN.test(roleId)) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'Le rank Roblox demandé est invalide.',
+    };
+  }
+
+  let roles;
+  try {
+    roles = await getRequestableRobloxGroupRoles({ config, fetchFn, forceRefresh: true });
+  } catch (error) {
+    console.error('[WebRoutes] Unable to validate requested Roblox role:', error.message);
+    return {
+      ok: false,
+      status: 503,
+      error: 'Les ranks Roblox ne peuvent pas être vérifiés pour le moment.',
+    };
+  }
+
+  const role = roles.find((item) => item.id === roleId);
+  if (!role) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'Le rank Roblox demandé ne fait pas partie des choix autorisés.',
+    };
+  }
+
+  try {
+    const link = await getVerifiedRobloxLink(discordUserId, { sitePool });
+    if (!link) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'Un compte Roblox vérifié est nécessaire pour demander un rank.',
+      };
+    }
+  } catch (error) {
+    console.error('[WebRoutes] Unable to validate applicant Roblox link:', error.message);
+    return {
+      ok: false,
+      status: 503,
+      error: 'La liaison Roblox ne peut pas être vérifiée pour le moment.',
+    };
+  }
+
+  return { ok: true, role };
+}
+
 /**
  * « Candidatures » tab: readable by any connected member, writable only by the
  * forms role. Mounted at `/candidatures`, so every path below is relative.
  */
-export function createFormsRouter({ pool, fetchFn } = {}) {
+export function createFormsRouter({
+  pool,
+  sitePool,
+  fetchFn,
+  config = webConfig,
+} = {}) {
   const router = Router();
 
   router.use(requireAuth);
@@ -1117,11 +1258,49 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         answers[String(question.id)] = answer;
       }
 
+      const rawRequestedRoleId = req.body?.[ROBLOX_RANK_ANSWER_KEY];
+      let requestedRobloxRoleId = null;
+      if (rawRequestedRoleId !== undefined && rawRequestedRoleId !== '') {
+        const validation = await validateRequestedRobloxRole({
+          roleId: rawRequestedRoleId,
+          discordUserId: userId,
+          sitePool,
+          config,
+          fetchFn,
+        });
+        if (!validation.ok) {
+          const rankField = await loadRobloxRankField({
+            discordUserId: userId,
+            sitePool,
+            config,
+            fetchFn,
+          });
+          return res.status(validation.status).render('form-fill', {
+            title: `${form.title} | Candidatures`,
+            form: describeForm(form),
+            answers,
+            requestedRobloxRoleId: typeof rawRequestedRoleId === 'string' ? rawRequestedRoleId : '',
+            ...rankField,
+            error: validation.error,
+          });
+        }
+        requestedRobloxRoleId = validation.role.id;
+        answers[ROBLOX_RANK_ANSWER_KEY] = requestedRobloxRoleId;
+      }
+
       if (missing.length) {
+        const rankField = await loadRobloxRankField({
+          discordUserId: userId,
+          sitePool,
+          config,
+          fetchFn,
+        });
         return res.status(400).render('form-fill', {
           title: `${form.title} | Candidatures`,
           form: describeForm(form),
           answers,
+          requestedRobloxRoleId,
+          ...rankField,
           error: `Merci de répondre à toutes les questions (${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '…' : ''}).`,
         });
       }
@@ -1358,11 +1537,29 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
       }
 
       const pending = await findPendingResponse(formId, userId, pool);
+      if (pending) {
+        return res.render('form-fill', {
+          title: `${form.title} | Candidatures`,
+          form: formView,
+          answers: {},
+          alreadySubmitted: true,
+          error: null,
+        });
+      }
+
+      const rankField = await loadRobloxRankField({
+        discordUserId: userId,
+        sitePool,
+        config,
+        fetchFn,
+      });
       return res.render('form-fill', {
         title: `${form.title} | Candidatures`,
         form: formView,
         answers: {},
-        alreadySubmitted: Boolean(pending),
+        requestedRobloxRoleId: null,
+        ...rankField,
+        alreadySubmitted: false,
         error: null,
       });
     } catch (error) {
@@ -1402,7 +1599,16 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         });
       }
 
-      const roleNames = await fetchGuildRoleNames({ fetchFn });
+      const [roleNames, rankField] = await Promise.all([
+        fetchGuildRoleNames({ fetchFn }),
+        loadRobloxRankField({
+          discordUserId: req.session.user.id,
+          sitePool,
+          config,
+          fetchFn,
+          preview: true,
+        }),
+      ]);
       return res.render('form-fill', {
         title: `Aperçu · ${form.title} | Candidatures`,
         form: {
@@ -1414,6 +1620,8 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
         alreadyAccepted: false,
         isPreview: true,
         backUrl: `/candidatures/${form.id}`,
+        requestedRobloxRoleId: null,
+        ...rankField,
         error: null,
       });
     } catch (error) {
@@ -1664,7 +1872,12 @@ export function createFormsRouter({ pool, fetchFn } = {}) {
  * the forms they created — the ownership filter lives in the SQL. A member with
  * an administration role sees the whole site instead. Mounted at `/reponses`.
  */
-export function createResponsesRouter({ pool, fetchFn } = {}) {
+export function createResponsesRouter({
+  pool,
+  sitePool,
+  fetchFn,
+  config = webConfig,
+} = {}) {
   const router = Router();
 
   router.use(requireFormsAccess);
@@ -1765,9 +1978,21 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
         });
       }
 
-      const [applicant, roleNames] = await Promise.all([
+      const requestedRobloxRoleId = typeof response.answers?.[ROBLOX_RANK_ANSWER_KEY] === 'string'
+        && ROBLOX_ROLE_ID_PATTERN.test(response.answers[ROBLOX_RANK_ANSWER_KEY])
+        ? response.answers[ROBLOX_RANK_ANSWER_KEY]
+        : null;
+      const [applicant, roleNames, requestedRobloxRoles] = await Promise.all([
         fetchSiteUser(response.applicantDiscordId, pool),
         fetchGuildRoleNames({ fetchFn }),
+        requestedRobloxRoleId
+          ? getRequestableRobloxGroupRoles({ config, fetchFn }).catch((error) => {
+            if (!(error instanceof RobloxGroupConfigurationError)) {
+              console.warn('[WebRoutes] Unable to resolve requested Roblox role name:', error.message);
+            }
+            return [];
+          })
+          : Promise.resolve([]),
       ]);
 
       return res.render('response-detail', {
@@ -1775,6 +2000,8 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
         response: {
           ...describeResponse(response),
           grantedRoleName: response.grantedRoleId ? (roleNames.get(response.grantedRoleId) || null) : null,
+          requestedRobloxRoleId,
+          requestedRobloxRoleName: requestedRobloxRoles.find((role) => role.id === requestedRobloxRoleId)?.name || null,
         },
         applicantName: applicant?.global_name || null,
         applicantUsername: applicant?.discord_username || null,
@@ -1826,6 +2053,7 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
 
     const warnings = [];
     let updated = null;
+    let robloxRankAssignment = null;
 
     try {
       if (decision === RESPONSE_STATUS.ACCEPTED) {
@@ -1852,6 +2080,41 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
           if (!roleResult.ok) warnings.push(roleResult.error);
         }
 
+        const requestedRobloxRoleId = response.answers?.[ROBLOX_RANK_ANSWER_KEY];
+        if (requestedRobloxRoleId !== undefined && requestedRobloxRoleId !== null && requestedRobloxRoleId !== '') {
+          try {
+            robloxRankAssignment = await applyRequestedRobloxGroupRole({
+              applicantDiscordId: response.applicantDiscordId,
+              requestedRoleId: requestedRobloxRoleId,
+              sitePool,
+              config,
+              fetchFn,
+            });
+            console.info('[RobloxGroupRanks] Requested role processed.', {
+              responseId,
+              reviewerDiscordId,
+              applicantDiscordId: response.applicantDiscordId,
+              roleId: robloxRankAssignment.roleId,
+              status: robloxRankAssignment.status,
+            });
+          } catch (error) {
+            console.error('[RobloxGroupRanks] Requested role assignment failed.', {
+              responseId,
+              reviewerDiscordId,
+              applicantDiscordId: response.applicantDiscordId,
+              roleId: typeof requestedRobloxRoleId === 'string' ? requestedRobloxRoleId : null,
+              status: error.status ?? null,
+              error: error.message,
+            });
+            warnings.push('le rank Roblox demandé n’a pas pu être attribué. Consultez les journaux.');
+            robloxRankAssignment = {
+              status: 'failed',
+              roleId: typeof requestedRobloxRoleId === 'string' ? requestedRobloxRoleId : null,
+              roleName: null,
+            };
+          }
+        }
+
         const applicant = await fetchSiteUser(response.applicantDiscordId, pool);
         const roleNames = await fetchGuildRoleNames({ fetchFn });
         const payload = createApplicationAcceptedPayload({
@@ -1860,6 +2123,9 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
           grantedRoleName: response.grantedRoleId
             ? (roleNames.get(response.grantedRoleId) || response.grantedRoleId)
             : null,
+          robloxGroupRoleName: robloxRankAssignment?.status === 'failed'
+            ? null
+            : robloxRankAssignment?.roleName || null,
         });
         const dmResult = await sendDirectMessage({
           userId: response.applicantDiscordId,
@@ -1898,6 +2164,13 @@ export function createResponsesRouter({ pool, fetchFn } = {}) {
       response: {
         ...describeResponse(updated),
         grantedRoleName: updated.grantedRoleId ? (roleNames.get(updated.grantedRoleId) || null) : null,
+        requestedRobloxRoleId: typeof updated.answers?.[ROBLOX_RANK_ANSWER_KEY] === 'string'
+          ? updated.answers[ROBLOX_RANK_ANSWER_KEY]
+          : null,
+        requestedRobloxRoleName: robloxRankAssignment?.status === 'failed'
+          ? null
+          : robloxRankAssignment?.roleName || null,
+        robloxRankAssignmentStatus: robloxRankAssignment?.status || null,
       },
       applicantName: applicant?.global_name || null,
       applicantUsername: applicant?.discord_username || null,

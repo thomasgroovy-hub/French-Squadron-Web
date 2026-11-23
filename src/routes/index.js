@@ -195,14 +195,14 @@ async function loadModerationLogEntries(dbPool) {
   return { entries, failedSources, truncatedSources };
 }
 
-export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
+export function createMainRouter({ pool, sitePool, fetchFn, config = webConfig } = {}) {
   const router = Router();
 
   router.use(async (req, res, next) => {
     if (!req.session?.user) return next();
     try {
       req.memberData = await fetchGuildMemberRoles({ userId: req.session.user.id, fetchFn });
-      res.locals.isStaff = req.memberData.hasTargetRole;
+      res.locals.isStaff = hasTargetRole(req.memberData);
       // Member management role (supervision tab: permadeath, sanctions, member directory)
       res.locals.isMemberManagement = hasMemberManagementRole(req.memberData);
       // Comit� d'�thique: may open a member file and manage its strikes.
@@ -238,10 +238,10 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       roblox = await getLinkedRobloxData(user.id, { pool, sitePool, fetchFn });
       req.robloxCache?.set(cacheKey, roblox);
     }
-    const hasTargetRole = Boolean(memberData?.hasTargetRole);
+    const targetAccess = hasTargetRole(memberData);
     const roleNames = await fetchGuildRoleNames({ fetchFn });
     const grades = getGrades(memberData?.roles || [], roleNames);
-    const sanctions = (hasTargetRole || staffView)
+    const sanctions = (targetAccess || staffView)
       ? await fetchMemberSanctions(user.id, pool)
       : null;
     return {
@@ -250,7 +250,7 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
       roblox,
       grades,
       primaryGrade: grades[0] || null,
-      hasTargetRole,
+      hasTargetRole: targetAccess,
       sanctions,
       targetRoleId: webConfig.targetRoleId,
       isStaffView: staffView,
@@ -310,8 +310,8 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
   // feature flag. It used to sit behind WEB_DOCUMENTATION_ENABLED, which
   // replaced the whole page with a 503 "module désactivé" page — that flag
   // existed for the old MySQL-backed editor, which no longer exists.
-  router.use('/candidatures', createFormsRouter({ pool, fetchFn }));
-  router.use('/reponses', createResponsesRouter({ pool, fetchFn }));
+  router.use('/candidatures', createFormsRouter({ pool, sitePool, fetchFn, config }));
+  router.use('/reponses', createResponsesRouter({ pool, sitePool, fetchFn, config }));
   // Supervision transverse des formulaires. Son propre routeur porte la porte
   // `requireFormsAdmin` : le rôle de gestion « sur ses propres formulaires »
   // n'y entre pas, et n'y gagne donc aucun droit nouveau.
@@ -574,5 +574,4 @@ export function createMainRouter({ pool, sitePool, fetchFn } = {}) {
 
   return router;
 }
-
 

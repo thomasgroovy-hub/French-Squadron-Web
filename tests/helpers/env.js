@@ -7,6 +7,7 @@
  * `.env` avec un SESSION_SECRET défini.
  */
 process.env.SESSION_SECRET ||= 'test-session-secret-not-a-real-credential';
+process.env.PERMADEATH_WEBHOOK_SECRET ||= 'test-permadeath-webhook-secret';
 process.env.DISCORD_APPLICATION_ID ||= '123456789012345678';
 process.env.DISCORD_CLIENT_ID ||= '123456789012345678';
 process.env.DISCORD_CLIENT_SECRET ||= 'test-client-secret';

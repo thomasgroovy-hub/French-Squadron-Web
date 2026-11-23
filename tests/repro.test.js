@@ -6,7 +6,8 @@ import './helpers/env.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { sealSession } from '../src/auth/session.js';
+import { sealSession, unsealSession } from '../src/auth/session.js';
+import { deriveCsrfToken } from '../src/security/csrf.js';
 import { createApp } from '../src/server.js';
 import { webConfig } from '../src/config.js';
 import { createFakePool } from './helpers/fake-mysql.js';
@@ -15,7 +16,13 @@ const FORMS_ROLE = '1532037579816570981';
 
 const MANAGER = { id: 'manager-1', username: 'Recruteur', globalName: 'Chef Recruteur', avatarUrl: null };
 
-const cookie = (user) => `${webConfig.cookieName}=${sealSession({ user }, webConfig.sessionSecret)}`;
+const auth = (user) => {
+  const sealed = sealSession({ user }, webConfig.sessionSecret);
+  return {
+    cookie: `${webConfig.cookieName}=${sealed}`,
+    csrf: deriveCsrfToken(unsealSession(sealed), webConfig.sessionSecret),
+  };
+};
 
 const discord = (roles = [FORMS_ROLE]) => async (url, options = {}) => {
   if (url.endsWith('/roles') && !options.method) {
@@ -48,13 +55,17 @@ async function startApp({ pool, fetchFn = discord() }) {
   const port = server.address().port;
   return {
     pool,
-    get: (path) => fetch(`http://localhost:${port}${path}`, { headers: { Cookie: cookie(MANAGER) }, redirect: 'manual' }),
-    post: (path, body) => fetch(`http://localhost:${port}${path}`, {
-      method: 'POST',
-      headers: { Cookie: cookie(MANAGER), 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: encode(body),
-      redirect: 'manual',
-    }),
+    get: (path) => fetch(`http://localhost:${port}${path}`, { headers: { Cookie: auth(MANAGER).cookie }, redirect: 'manual' }),
+    post: (path, body) => {
+      const { cookie: ck, csrf } = auth(MANAGER);
+      const params = encode(body);
+      return fetch(`http://localhost:${port}${path}`, {
+        method: 'POST',
+        headers: { Cookie: ck, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params ? `${params}&_csrf=${encodeURIComponent(csrf)}` : `_csrf=${encodeURIComponent(csrf)}`,
+        redirect: 'manual',
+      });
+    },
     close: () => server.close(),
   };
 }
