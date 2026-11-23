@@ -13,6 +13,15 @@ function normalizeReason(value) {
   return typeof value === 'string' ? value.trim().slice(0, MAX_REASON_LENGTH) : '';
 }
 
+function normalizeGuildId(value) {
+  const id = typeof value === 'string' ? value.trim() : '';
+  return isValidDiscordId(id) ? id : null;
+}
+
+function normalizeGuildName(value) {
+  return typeof value === 'string' ? value.trim().slice(0, 120) || null : null;
+}
+
 export async function fetchMemberSanctions(discordUserId, pool = getDatabasePool()) {
   if (!pool || !discordUserId) {
     return {
@@ -101,7 +110,7 @@ export async function fetchMemberSanctions(discordUserId, pool = getDatabasePool
  * and none is needed.
  */
 export async function createStrike(
-  { discordUserId, moderatorId, reason },
+  { discordUserId, moderatorId, reason, guildId, guildName },
   pool = getDatabasePool(),
 ) {
   if (!pool) return { ok: false, error: 'database-unavailable' };
@@ -111,13 +120,26 @@ export async function createStrike(
   const cleanReason = normalizeReason(reason);
   if (!cleanReason) return { ok: false, error: 'empty-reason' };
 
+  const cleanGuildId = normalizeGuildId(guildId);
+  const cleanGuildName = normalizeGuildName(guildName);
+  const columns = ['discord_id', 'moderator_discord_id', 'raison'];
+  const values = [discordUserId, moderatorId, cleanReason];
+  if (cleanGuildId) {
+    columns.push('guild_id');
+    values.push(cleanGuildId);
+  }
+  if (cleanGuildName) {
+    columns.push('guild_name');
+    values.push(cleanGuildName);
+  }
+
   try {
     const [result] = await pool.execute(
-      `INSERT INTO ${STRIKE_TABLE} (discord_id, moderator_discord_id, raison)
-       VALUES (?, ?, ?)`,
-      [discordUserId, moderatorId, cleanReason],
+      `INSERT INTO ${STRIKE_TABLE} (${columns.join(', ')})
+       VALUES (${columns.map(() => '?').join(', ')})`,
+      values,
     );
-    return { ok: true, id: result.insertId };
+    return { ok: true, id: result.insertId, guildId: cleanGuildId, guildName: cleanGuildName };
   } catch (error) {
     console.error('[SanctionsService] Error creating strike:', error.message);
     return { ok: false, error: 'insert-failed' };

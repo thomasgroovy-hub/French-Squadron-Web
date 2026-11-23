@@ -138,7 +138,7 @@
         <p class="eyebrow">Espace de travail</p>
         <h2 id="bot-logs-title"><%= selectedScope.name %></h2>
         <p class="muted" id="bot-logs-subtitle" style="font-size: 0.82rem; margin-top: 0.2rem;">
-          <%= selectedScope.kind === 'server' ? 'Bannissements enregistrés pour ce serveur.' : 'Avertissements et cas de modération sans rattachement à un serveur.' %>
+          <%= selectedScope.kind === 'server' ? 'Avertissements et bannissements enregistrés pour ce serveur.' : 'Journaux non rattachés à un serveur.' %>
         </p>
       </div>
       <div class="bot-log-stat" aria-label="<%= total %> entrées">
@@ -149,7 +149,7 @@
 
     <p class="bot-scope-note" id="bot-scope-note">
       <%= selectedScope.kind === 'server'
-        ? 'Les avertissements et cas de modération ne sont pas rattachés à un serveur dans la base actuelle : ils restent dans « Journaux généraux ».'
+        ? 'Les cas de modération et les anciens avertissements sans serveur restent dans « Journaux généraux ».'
         : 'Cette section contient uniquement les journaux que la base ne rattache pas à un serveur. Aucune affectation n’est supposée.' %>
     </p>
 
@@ -285,10 +285,10 @@
     if (hiddenScope) hiddenScope.value = data.scope.id;
     if (title) title.textContent = data.scope.name;
     if (subtitle) subtitle.textContent = data.scope.kind === 'server'
-      ? 'Bannissements enregistrés pour ce serveur.'
-      : 'Avertissements et cas de modération sans rattachement à un serveur.';
+      ? 'Avertissements et bannissements enregistrés pour ce serveur.'
+      : 'Journaux non rattachés à un serveur.';
     if (note) note.textContent = data.scope.kind === 'server'
-      ? 'Les avertissements et cas de modération ne sont pas rattachés à un serveur dans la base actuelle : ils restent dans « Journaux généraux ».'
+      ? 'Les cas de modération et les anciens avertissements sans serveur restent dans « Journaux généraux ».'
       : 'Cette section contient uniquement les journaux que la base ne rattache pas à un serveur. Aucune affectation n’est supposée.';
     if (totalCount) totalCount.textContent = String(data.total);
   }

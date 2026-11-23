@@ -117,6 +117,14 @@ async function loadBotGuilds(fetchFn, config) {
   });
 }
 
+async function resolveWebStrikeGuild(fetchFn, config) {
+  const guildId = config.guildId ?? webConfig.guildId;
+  if (!guildId) return {};
+  const guildResult = await loadBotGuilds(fetchFn, config);
+  const guild = guildResult.guilds.find((entry) => entry.id === guildId);
+  return { guildId, guildName: guild?.name ?? null };
+}
+
 async function getModerationColumns(dbPool, table) {
   let byPool = moderationColumnCache.get(dbPool);
   if (!byPool) {
@@ -610,10 +618,12 @@ export function createMainRouter({ pool, sitePool, fetchFn, config = webConfig }
     async (req, res) => {
       const target = req.params.discordUserId;
       return handleStrikeAction(req, res, async () => {
+        const guild = await resolveWebStrikeGuild(fetchFn, config);
         const result = await createStrike({
           discordUserId: target,
           moderatorId: req.session.user.id,
           reason: req.body?.reason,
+          ...guild,
         }, pool);
         if (!result.ok) return result;
 

@@ -248,6 +248,34 @@ test('createStrike writes the target, the acting moderator and the reason', asyn
   assert.deepEqual(calls[0].params, [STRIKE_TARGET, STRIKE_MODERATOR, 'Harcèlement en vocal']);
 });
 
+test('createStrike records the source guild when provided', async () => {
+  const calls = [];
+  const mockPool = {
+    execute: async (query, params) => {
+      calls.push({ query, params });
+      return [{ insertId: 45 }];
+    },
+  };
+
+  const result = await createStrike({
+    discordUserId: STRIKE_TARGET,
+    moderatorId: STRIKE_MODERATOR,
+    reason: '  Harcèlement en vocal  ',
+    guildId: '111111111111111111',
+    guildName: '  Site-66  ',
+  }, mockPool);
+
+  assert.equal(result.ok, true);
+  assert.match(calls[0].query, /INSERT INTO strikes \(discord_id, moderator_discord_id, raison, guild_id, guild_name\)/);
+  assert.deepEqual(calls[0].params, [
+    STRIKE_TARGET,
+    STRIKE_MODERATOR,
+    'Harcèlement en vocal',
+    '111111111111111111',
+    'Site-66',
+  ]);
+});
+
 test('createStrike refuses an empty reason and an invalid Discord id', async () => {
   const mockPool = { execute: async () => { throw new Error('must not hit the database'); } };
 
@@ -1101,7 +1129,7 @@ test('fetchBotGuilds lists the bot guilds with member counts only', async () => 
   assert.equal('approximate_presence_count' in result.guilds[0], false);
 });
 
-test('the bot admin API separates server bans from unscoped moderation logs', async () => {
+test('the bot admin API separates source-tagged warnings from unscoped moderation logs', async () => {
   const adminId = 'bot-admin-api';
   const session = sealSession({
     user: { id: adminId, username: 'BotAdmin', globalName: 'Bot Admin', avatarUrl: null },
@@ -1113,15 +1141,40 @@ test('the bot admin API separates server bans from unscoped moderation logs', as
         if (query.includes('moderation_bans')) {
           return [[{ Field: 'discord_id' }, { Field: 'guild_name' }, { Field: 'banned_at' }]];
         }
+        if (query.includes('strikes')) {
+          return [[
+            { Field: 'discord_id' },
+            { Field: 'moderator_discord_id' },
+            { Field: 'raison' },
+            { Field: 'created_at' },
+            { Field: 'guild_id' },
+            { Field: 'guild_name' },
+          ]];
+        }
         return [[{ Field: 'discord_id' }, { Field: 'created_at' }]];
       }
       if (query.includes('`strikes`')) {
-        return [[{
-          discord_id: 'warn-target',
-          moderator_discord_id: 'warn-moderator',
-          raison: 'Propos inappropriés',
-          created_at: new Date('2024-02-15T10:00:00Z'),
-        }]];
+        if (query.includes('`guild_id` = ?')) {
+          return [[{
+            discord_id: 'warn-target',
+            moderator_discord_id: 'warn-moderator',
+            raison: 'Propos inappropriés',
+            guild_id: '111111111111111111',
+            guild_name: 'Site-66',
+            created_at: new Date('2024-02-15T10:00:00Z'),
+          }]];
+        }
+        if (query.includes('`guild_id` IS NULL')) {
+          return [[{
+            discord_id: 'legacy-warn',
+            moderator_discord_id: 'legacy-moderator',
+            raison: 'Ancien avertissement',
+            guild_id: null,
+            guild_name: null,
+            created_at: new Date('2024-02-14T10:00:00Z'),
+          }]];
+        }
+        return [[]];
       }
       if (query.includes('`moderation_cases`')) return [[]];
       if (query.includes('`moderation_bans`')) {
@@ -1165,7 +1218,8 @@ test('the bot admin API separates server bans from unscoped moderation logs', as
     const pageRes = await fetch(`${base}/administration/bot?serveur=111111111111111111`, { headers });
     const html = await pageRes.text();
     assert.equal(pageRes.status, 200);
-    assert.match(html, /Bannissements enregistrés pour ce serveur/);
+    assert.match(html, /Avertissements et bannissements enregistrés pour ce serveur/);
+    assert.match(html, /warn-target/);
     assert.match(html, /ban-target/);
     assert.match(html, /Journaux généraux/);
     assert.equal(html.includes('bot-token'), false);
@@ -1183,15 +1237,19 @@ test('the bot admin API separates server bans from unscoped moderation logs', as
     assert.equal(generalPayload.scope.kind, 'general');
     assert.equal(generalPayload.entries.length, 1);
     assert.equal(generalPayload.entries[0].actionType, 'warn');
+    assert.equal(generalPayload.entries[0].targetDiscordId, 'legacy-warn');
     assert.equal(generalPayload.entries[0].guildId, null);
 
     const serverRes = await fetch(`${base}/administration/bot/api/journaux?serveur=111111111111111111`, { headers });
     const serverPayload = await serverRes.json();
     assert.equal(serverRes.status, 200);
     assert.equal(serverPayload.scope.kind, 'server');
-    assert.equal(serverPayload.entries.length, 1);
-    assert.equal(serverPayload.entries[0].actionType, 'ban');
-    assert.equal(serverPayload.entries[0].guildName, 'Site-66');
+    assert.equal(serverPayload.entries.length, 2);
+    assert.deepEqual(serverPayload.entries.map((entry) => entry.actionType).sort(), ['ban', 'warn']);
+    const serverWarning = serverPayload.entries.find((entry) => entry.actionType === 'warn');
+    assert.equal(serverWarning.targetDiscordId, 'warn-target');
+    assert.equal(serverWarning.guildId, '111111111111111111');
+    assert.equal(serverWarning.guildName, 'Site-66');
 
     const invalidRes = await fetch(`${base}/administration/bot/api/journaux?serveur=999999999999999999`, { headers });
     const invalidPayload = await invalidRes.json();
