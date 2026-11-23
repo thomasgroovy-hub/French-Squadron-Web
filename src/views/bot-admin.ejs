@@ -1,118 +1,439 @@
 <%
-  // Libellés des sources, pour les avertissements d'intégration partielle.
-  const SOURCE_LABELS = {
-    strikes: 'les avertissements',
-    moderation_cases: 'les cas de modération',
-    moderation_bans: 'les bannissements',
-  };
-  const sourceList = (sources) => sources.map((source) => SOURCE_LABELS[source] || source).join(', ');
-
-  // `typeFilter` est normalisé côté serveur : il ne peut valoir que l'une de
-  // ces quatre valeurs, jamais une saisie brute du visiteur.
   const TYPE_OPTIONS = [
     { value: 'all', label: 'Toutes les actions' },
     { value: 'warn', label: 'Avertissements' },
     { value: 'case', label: 'Cas de modération' },
     { value: 'ban', label: 'Bannissements' },
   ];
+
+  const sourceList = (sources) => sources
+    .map((source) => sourceLabels[source] || source)
+    .join(', ');
+
+  const initials = (name) => String(name || '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join('')
+    .toLocaleUpperCase('fr') || 'S';
+
+  const jsLiteral = (value) => JSON.stringify(value).replace(/</g, '\\u003c');
 %>
+<style>
+  .bot-admin-shell { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 1rem; align-items: start; margin-top: 1.5rem; }
+  .bot-panel { min-width: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
+  .bot-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.9rem; }
+  .bot-panel-head h2 { font-size: 1rem; margin: 0.15rem 0 0; }
+  .bot-panel-head p { margin: 0; }
+  .bot-server-search { width: 100%; margin-bottom: 0.75rem; padding: 0.55rem 0.7rem; border: 1px solid var(--field-border); border-radius: var(--radius-sm); color: var(--text-main); background: var(--field-bg); font: inherit; font-size: 0.85rem; }
+  .bot-server-search:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+  .bot-server-list { display: grid; gap: 0.4rem; max-height: 620px; overflow-y: auto; padding-right: 2px; }
+  .bot-server-item { display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 0.65rem; padding: 0.6rem; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-main); text-decoration: none; background: var(--bg-subtle); }
+  .bot-server-item:hover { border-color: var(--border-strong); text-decoration: none; }
+  .bot-server-item.is-active { border-color: var(--accent); box-shadow: inset 2px 0 var(--accent); background: var(--bg-elevated); }
+  .bot-server-item[hidden] { display: none; }
+  .bot-server-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; object-fit: cover; border: 1px solid var(--border); background: var(--bg-pill); color: var(--text-muted); font-size: 0.72rem; font-weight: 700; }
+  .bot-server-name { display: block; min-width: 0; font-size: 0.88rem; font-weight: 600; overflow-wrap: anywhere; }
+  .bot-server-meta { display: block; margin-top: 2px; color: var(--text-muted); font-size: 0.75rem; overflow-wrap: anywhere; }
+  .bot-log-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding-bottom: 0.9rem; border-bottom: 1px solid var(--border); }
+  .bot-log-head h2 { font-size: 1.15rem; margin: 0.2rem 0 0; overflow-wrap: anywhere; }
+  .bot-log-stat { display: flex; align-items: baseline; gap: 0.4rem; white-space: nowrap; }
+  .bot-log-stat-value { font-family: "Space Grotesk", sans-serif; font-size: 1.15rem; font-weight: 700; }
+  .bot-log-stat-label { color: var(--text-muted); font-size: 0.75rem; }
+  .bot-scope-note { margin: 0.8rem 0 0; color: var(--text-muted); font-size: 0.78rem; overflow-wrap: anywhere; }
+  .bot-log-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 0.65rem; margin: 0.9rem 0; }
+  .bot-log-toolbar .bot-tool-field { display: grid; gap: 0.3rem; min-width: 0; }
+  .bot-log-toolbar label { color: var(--text-muted); font-size: 0.75rem; font-weight: 600; }
+  .bot-log-toolbar select, .bot-log-toolbar input[type="search"] { min-width: 0; padding: 0.55rem 0.7rem; border: 1px solid var(--field-border); border-radius: var(--radius-sm); color: var(--text-main); background: var(--field-bg); font: inherit; font-size: 0.85rem; }
+  .bot-log-toolbar select { min-width: 170px; }
+  .bot-log-toolbar input[type="search"] { width: min(280px, 100%); }
+  .bot-log-toolbar .btn { padding: 0.5rem 0.85rem; }
+  .bot-inline-notice { margin: 0.75rem 0; }
+  .bot-log-content { min-width: 0; }
+  .bot-log-summary { color: var(--text-muted); font-size: 0.78rem; margin: 0.9rem 0 0.55rem; }
+  .bot-log-list { display: grid; gap: 0.45rem; }
+  .bot-log-row { display: grid; grid-template-columns: minmax(110px, 130px) minmax(0, 1fr) auto; align-items: start; gap: 0.75rem; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-left-width: 2px; border-radius: var(--radius-sm); background: var(--bg-subtle); }
+  .bot-log-row.is-warning { border-left-color: var(--warning); }
+  .bot-log-row.is-danger { border-left-color: var(--danger); }
+  .bot-log-kind { padding-top: 0.1rem; }
+  .bot-log-main { min-width: 0; }
+  .bot-log-title { font-weight: 600; font-size: 0.88rem; }
+  .bot-log-meta { margin-top: 2px; color: var(--text-muted); font-size: 0.76rem; overflow-wrap: anywhere; }
+  .bot-log-date { color: var(--text-muted); font-size: 0.75rem; white-space: nowrap; }
+  .bot-empty { display: grid; justify-items: start; gap: 0.4rem; padding: 1.4rem; border: 1px dashed var(--border); border-radius: var(--radius-sm); color: var(--text-muted); font-size: 0.85rem; }
+  .bot-empty strong { color: var(--text-main); font-size: 0.92rem; }
+  .bot-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-top: 0.9rem; }
+  @media (max-width: 900px) {
+    .bot-admin-shell { grid-template-columns: minmax(0, 1fr); }
+    .bot-server-list { max-height: none; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  }
+  @media (max-width: 620px) {
+    .bot-log-head { flex-direction: column; }
+    .bot-log-row { grid-template-columns: minmax(0, 1fr); }
+    .bot-log-date { white-space: normal; }
+    .bot-log-toolbar select, .bot-log-toolbar input[type="search"] { width: 100%; }
+  }
+</style>
+
 <div class="page-head">
   <h1 class="page-title">Administration du bot</h1>
-  <p class="muted">Journal de modération de l'application FPCS Discord Bot.</p>
+  <p class="muted">Serveurs et journaux de modération de l’application FPCS Discord Bot.</p>
 </div>
 
-<section class="card" style="margin-top: 1.5rem;">
-  <div class="section-head">
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-    </svg>
-    <h2>Journal de modération</h2>
-    <span class="row-aside"><span class="badge badge-cyan"><%= total %></span></span>
-  </div>
-
-  <% if (failedSources.length === 3) { %>
-    <div class="notice notice-danger">
-      Le journal de modération est indisponible : aucune des tables de modération n’a pu être interrogée.
+<div class="bot-admin-shell">
+  <aside class="bot-panel" aria-labelledby="bot-servers-title">
+    <div class="bot-panel-head">
+      <div>
+        <p class="eyebrow">Navigation</p>
+        <h2 id="bot-servers-title">Serveurs</h2>
+      </div>
+      <span class="badge badge-cyan"><%= guilds.length %></span>
     </div>
-  <% } else if (failedSources.length) { %>
-    <%# Une table en erreur n'est jamais présentée comme vide : la liste affichée
-        est explicitement signalée comme incomplète. %>
-    <div class="notice notice-warning">
-      Journal incomplet : <%= sourceList(failedSources) %> n’ont pas pu être chargés.
-    </div>
-  <% } %>
-  <% if (truncatedSources.length) { %>
-    <div class="notice notice-warning">
-      Seuls les <%= sourceLimit %> enregistrements les plus récents de <%= sourceList(truncatedSources) %> sont affichés : le total est donc un minimum.
-    </div>
-  <% } %>
-
-  <form class="toolbar" method="get" action="/administration/bot" style="margin-top: 1.1rem; align-items: center;">
-    <label class="field-label" for="moderation-type">Type d’action</label>
-    <select class="field-input" id="moderation-type" name="type" style="width: auto;">
-      <% TYPE_OPTIONS.forEach((option) => { %>
-        <option value="<%= option.value %>"<%= typeFilter === option.value ? ' selected' : '' %>><%= option.label %></option>
+    <input class="bot-server-search" id="bot-server-search" type="search" placeholder="Rechercher un serveur" aria-label="Rechercher un serveur">
+    <nav class="bot-server-list" id="bot-server-list" aria-label="Liste des serveurs">
+      <a class="bot-server-item<%= selectedScope.kind === 'general' ? ' is-active' : '' %>"
+        href="<%= buildBotLogUrl('general', 'all', '', 1) %>"
+        data-scope="general"
+        data-scope-name="Journaux généraux">
+        <span class="bot-server-icon" aria-hidden="true">JG</span>
+        <span>
+          <span class="bot-server-name">Journaux généraux</span>
+          <span class="bot-server-meta">Sans rattachement à un serveur</span>
+        </span>
+      </a>
+      <% guilds.forEach((guild) => { %>
+        <a class="bot-server-item<%= selectedScope.kind === 'server' && selectedScope.id === guild.id ? ' is-active' : '' %>"
+          href="<%= buildBotLogUrl(guild.id, 'all', '', 1) %>"
+          data-scope="<%= guild.id %>"
+          data-scope-name="<%= guild.name %>">
+          <% if (guild.iconUrl) { %>
+            <img class="bot-server-icon" src="<%= guild.iconUrl %>" alt="" loading="lazy">
+          <% } else { %>
+            <span class="bot-server-icon" aria-hidden="true"><%= initials(guild.name) %></span>
+          <% } %>
+          <span>
+            <span class="bot-server-name"><%= guild.name %></span>
+            <span class="bot-server-meta">
+              <%= guild.memberCount === null ? 'Membres indisponibles' : `${guild.memberCount.toLocaleString('fr-FR')} membres` %><%= guild.isConfigured ? ' · serveur principal' : '' %>
+            </span>
+          </span>
+        </a>
       <% }); %>
-    </select>
-    <button class="btn btn-outline btn-sm" type="submit">Filtrer</button>
-  </form>
-  <%# Le formulaire ne transporte que `type` : changer de filtre repart donc
-      toujours à la page 1, sans jamais conserver l'ancien `page`. %>
+    </nav>
+    <% if (!guilds.length) { %>
+      <div class="bot-empty" style="margin-top: 0.75rem;">
+        <strong>Aucun serveur disponible</strong>
+        <span>Le bot ne renvoie actuellement aucun serveur exploitable.</span>
+      </div>
+    <% } %>
+    <% if (guildError) { %>
+      <div class="notice notice-warning bot-inline-notice"><%= guildError %></div>
+    <% } %>
+  </aside>
 
-  <% if (!total) { %>
-    <div class="empty-state" style="margin-top: 1.25rem;">
-      <span class="empty-state-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.5l2.4 2.4 4.6-5"/></svg>
-      </span>
-      <p><%= failedSources.length === 3
-        ? 'Le journal de modération n’a pas pu être chargé.'
-        : (failedSources.length
-          ? 'Aucun enregistrement à afficher : certaines sources n’ont pas pu être chargées.'
-          : (typeFilter === 'all' ? 'Aucun élément de modération enregistré.' : 'Aucun enregistrement ne correspond à ce filtre.')) %></p>
-    </div>
-  <% } else { %>
-    <p class="muted" style="margin: 1.1rem 0 0.6rem; font-size: 0.8rem;">
-      Affichage de <%= rangeStart %> à <%= rangeEnd %> sur <%= total %> enregistrement<%= total > 1 ? 's' : '' %>
-      · Page <%= page %> sur <%= totalPages %>
+  <section class="bot-panel" aria-labelledby="bot-logs-title">
+    <header class="bot-log-head">
+      <div>
+        <p class="eyebrow">Espace de travail</p>
+        <h2 id="bot-logs-title"><%= selectedScope.name %></h2>
+        <p class="muted" id="bot-logs-subtitle" style="font-size: 0.82rem; margin-top: 0.2rem;">
+          <%= selectedScope.kind === 'server' ? 'Bannissements enregistrés pour ce serveur.' : 'Avertissements et cas de modération sans rattachement à un serveur.' %>
+        </p>
+      </div>
+      <div class="bot-log-stat" aria-label="<%= total %> entrées">
+        <span class="bot-log-stat-value" id="bot-total-count"><%= total %></span>
+        <span class="bot-log-stat-label">entrées</span>
+      </div>
+    </header>
+
+    <p class="bot-scope-note" id="bot-scope-note">
+      <%= selectedScope.kind === 'server'
+        ? 'Les avertissements et cas de modération ne sont pas rattachés à un serveur dans la base actuelle : ils restent dans « Journaux généraux ».'
+        : 'Cette section contient uniquement les journaux que la base ne rattache pas à un serveur. Aucune affectation n’est supposée.' %>
     </p>
 
-    <div class="row-list">
-      <% entries.forEach((entry) => { %>
-        <article class="data-row">
-          <span class="row-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5"/><path d="M12 16h.01"/></svg>
-          </span>
-          <div class="row-body">
-            <div class="row-title"><%= entry.actionLabel %></div>
-            <div class="row-subtitle" style="overflow-wrap: anywhere;">
-              Cible&nbsp;: <%= entry.targetDiscordId || '—' %>
-              · Modérateur&nbsp;: <%= entry.moderatorDiscordId || '—' %>
-            </div>
-            <div class="row-subtitle" style="overflow-wrap: anywhere;">
-              Raison&nbsp;: <%= entry.reason || '—' %>
-            </div>
-            <% if (entry.guildName) { %>
-              <div class="row-subtitle" style="overflow-wrap: anywhere;">Serveur&nbsp;: <%= entry.guildName %></div>
-            <% } %>
-          </div>
-          <div class="row-aside">
-            <span class="badge badge-<%= entry.severity %>"><%= entry.actionLabel %></span>
-            <span class="row-date"><%= entry.formattedDate %></span>
-          </div>
-        </article>
-      <% }); %>
-    </div>
+    <form class="bot-log-toolbar" id="bot-log-filters" method="get" action="/administration/bot">
+      <input type="hidden" name="serveur" value="<%= selectedScope.id %>">
+      <div class="bot-tool-field">
+        <label for="bot-log-type">Type d’action</label>
+        <select class="field-input" id="bot-log-type" name="type">
+          <% TYPE_OPTIONS.forEach((option) => { %>
+            <option value="<%= option.value %>"<%= typeFilter === option.value ? ' selected' : '' %>><%= option.label %></option>
+          <% }); %>
+        </select>
+      </div>
+      <div class="bot-tool-field">
+        <label for="bot-log-search">Rechercher</label>
+        <input type="search" id="bot-log-search" name="q" value="<%= search %>" maxlength="80" placeholder="Membre, raison, modérateur">
+      </div>
+      <button class="btn btn-outline btn-sm" type="submit">Appliquer</button>
+      <button class="btn btn-outline btn-sm" id="bot-log-refresh" type="button">Actualiser</button>
+    </form>
 
-    <% if (totalPages > 1) { %>
-      <nav class="toolbar" style="margin-top: 1rem; align-items: center;" aria-label="Pagination du journal de modération">
-        <% if (page > 1) { %>
-          <a class="btn btn-outline btn-sm" href="/administration/bot?type=<%= typeFilter %>&amp;page=<%= page - 1 %>">Page précédente</a>
+    <div class="bot-log-content" id="bot-log-content" aria-live="polite">
+      <% if (failedSources.length === 3) { %>
+        <div class="notice notice-danger bot-inline-notice">Le journal de modération est indisponible : aucune des tables de modération n’a pu être interrogée.</div>
+      <% } else if (failedSources.length) { %>
+        <div class="notice notice-warning bot-inline-notice">Journal incomplet : <%= sourceList(failedSources) %> n’ont pas pu être chargés.</div>
+      <% } %>
+      <% if (truncatedSources.length) { %>
+        <div class="notice notice-warning bot-inline-notice">Seuls les <%= sourceLimit %> enregistrements les plus récents de <%= sourceList(truncatedSources) %> sont affichés : le total est donc un minimum.</div>
+      <% } %>
+
+      <% if (!total) { %>
+        <div class="bot-empty">
+          <strong>Aucun journal à afficher</strong>
+          <span><%= failedSources.length === 3
+            ? 'Aucune source de modération n’a pu être chargée.'
+            : (failedSources.length
+              ? 'Certaines sources n’ont pas pu être chargées.'
+              : (typeFilter === 'all' || search
+                ? 'Aucun enregistrement ne correspond à cette sélection.'
+                : 'Aucun enregistrement enregistré pour cette sélection.')) %></span>
+        </div>
+      <% } else { %>
+        <p class="bot-log-summary">Affichage de <%= rangeStart %> à <%= rangeEnd %> sur <%= total %> enregistrement<%= total > 1 ? 's' : '' %> · Page <%= page %> sur <%= totalPages %></p>
+        <div class="bot-log-list">
+          <% entries.forEach((entry) => { %>
+            <article class="bot-log-row is-<%= entry.severity %>">
+              <div class="bot-log-kind">
+                <span class="badge badge-<%= entry.severity %>"><%= entry.actionLabel %></span>
+              </div>
+              <div class="bot-log-main">
+                <div class="bot-log-title"><%= entry.actionLabel %></div>
+                <div class="bot-log-meta">Cible&nbsp;: <%= entry.targetDiscordId || '—' %> · Modérateur&nbsp;: <%= entry.moderatorDiscordId || '—' %></div>
+                <div class="bot-log-meta">Raison&nbsp;: <%= entry.reason || '—' %></div>
+                <% if (entry.guildName) { %>
+                  <div class="bot-log-meta">Serveur&nbsp;: <%= entry.guildName %></div>
+                <% } %>
+              </div>
+              <div class="bot-log-date"><%= entry.formattedDate %></div>
+            </article>
+          <% }); %>
+        </div>
+        <% if (totalPages > 1) { %>
+          <nav class="bot-pagination" aria-label="Pagination du journal de modération">
+            <% if (page > 1) { %>
+              <a class="btn btn-outline btn-sm" href="<%= buildBotLogUrl(selectedScope.id, typeFilter, search, page - 1) %>" data-page="<%= page - 1 %>">Page précédente</a>
+            <% } %>
+            <span class="muted" style="font-size: 0.78rem;">Page <%= page %> sur <%= totalPages %></span>
+            <% if (page < totalPages) { %>
+              <a class="btn btn-outline btn-sm" href="<%= buildBotLogUrl(selectedScope.id, typeFilter, search, page + 1) %>" data-page="<%= page + 1 %>">Page suivante</a>
+            <% } %>
+          </nav>
         <% } %>
-        <span class="muted" style="font-size: 0.8rem;">Page <%= page %> sur <%= totalPages %></span>
-        <% if (page < totalPages) { %>
-          <a class="btn btn-outline btn-sm" href="/administration/bot?type=<%= typeFilter %>&amp;page=<%= page + 1 %>">Page suivante</a>
-        <% } %>
-      </nav>
-    <% } %>
-  <% } %>
-</section>
+      <% } %>
+    </div>
+  </section>
+</div>
+
+<script nonce="<%= cspNonce %>">
+(function () {
+  var panel = document.getElementById('bot-log-content');
+  if (!panel) return;
+
+  var sourceLabels = <%- jsLiteral(sourceLabels) %>;
+  var state = {
+    scope: <%- jsLiteral(selectedScope.id) %>,
+    type: <%- jsLiteral(typeFilter) %>,
+    q: <%- jsLiteral(search) %>,
+    page: <%- jsLiteral(page) %>
+  };
+
+  var form = document.getElementById('bot-log-filters');
+  var typeSelect = document.getElementById('bot-log-type');
+  var searchInput = document.getElementById('bot-log-search');
+  var refreshButton = document.getElementById('bot-log-refresh');
+  var serverList = document.getElementById('bot-server-list');
+  var serverSearch = document.getElementById('bot-server-search');
+  var title = document.getElementById('bot-logs-title');
+  var subtitle = document.getElementById('bot-logs-subtitle');
+  var note = document.getElementById('bot-scope-note');
+  var totalCount = document.getElementById('bot-total-count');
+
+  function make(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
+  }
+
+  function labelList(sources) {
+    return sources.map(function (source) {
+      return sourceLabels[source] || source;
+    }).join(', ');
+  }
+
+  function writeUrl() {
+    var params = new URLSearchParams();
+    params.set('serveur', state.scope);
+    if (state.type !== 'all') params.set('type', state.type);
+    if (state.q) params.set('q', state.q);
+    if (state.page > 1) params.set('page', String(state.page));
+    window.history.replaceState(null, '', '/administration/bot?' + params.toString());
+  }
+
+  function syncControls(data) {
+    var items = document.querySelectorAll('.bot-server-item');
+    Array.prototype.forEach.call(items, function (item) {
+      item.classList.toggle('is-active', item.getAttribute('data-scope') === data.scope.id);
+    });
+    if (typeSelect.value !== data.typeFilter) typeSelect.value = data.typeFilter;
+    if (searchInput.value !== data.search) searchInput.value = data.search;
+    var hiddenScope = form.querySelector('input[name="serveur"]');
+    if (hiddenScope) hiddenScope.value = data.scope.id;
+    if (title) title.textContent = data.scope.name;
+    if (subtitle) subtitle.textContent = data.scope.kind === 'server'
+      ? 'Bannissements enregistrés pour ce serveur.'
+      : 'Avertissements et cas de modération sans rattachement à un serveur.';
+    if (note) note.textContent = data.scope.kind === 'server'
+      ? 'Les avertissements et cas de modération ne sont pas rattachés à un serveur dans la base actuelle : ils restent dans « Journaux généraux ».'
+      : 'Cette section contient uniquement les journaux que la base ne rattache pas à un serveur. Aucune affectation n’est supposée.';
+    if (totalCount) totalCount.textContent = String(data.total);
+  }
+
+  function appendNotices(fragment, data) {
+    if (data.failedSources.length >= 3) {
+      fragment.append(make('div', 'notice notice-danger bot-inline-notice', 'Le journal de modération est indisponible : aucune des tables de modération n’a pu être interrogée.'));
+    } else if (data.failedSources.length) {
+      fragment.append(make('div', 'notice notice-warning bot-inline-notice', 'Journal incomplet : ' + labelList(data.failedSources) + ' n’ont pas pu être chargés.'));
+    }
+    if (data.truncatedSources.length) {
+      fragment.append(make('div', 'notice notice-warning bot-inline-notice', 'Seuls les ' + data.sourceLimit + ' enregistrements les plus récents de ' + labelList(data.truncatedSources) + ' sont affichés : le total est donc un minimum.'));
+    }
+  }
+
+  function appendRow(list, entry) {
+    var row = make('article', 'bot-log-row is-' + entry.severity);
+    var kind = make('div', 'bot-log-kind');
+    kind.append(make('span', 'badge badge-' + entry.severity, entry.actionLabel));
+
+    var main = make('div', 'bot-log-main');
+    main.append(make('div', 'bot-log-title', entry.actionLabel));
+    main.append(make('div', 'bot-log-meta', 'Cible : ' + (entry.targetDiscordId || '—') + ' · Modérateur : ' + (entry.moderatorDiscordId || '—')));
+    main.append(make('div', 'bot-log-meta', 'Raison : ' + (entry.reason || '—')));
+    if (entry.guildName) main.append(make('div', 'bot-log-meta', 'Serveur : ' + entry.guildName));
+
+    row.append(kind, main, make('div', 'bot-log-date', entry.formattedDate));
+    list.append(row);
+  }
+
+  function render(data) {
+    var fragment = document.createDocumentFragment();
+    appendNotices(fragment, data);
+
+    if (!data.total) {
+      var empty = make('div', 'bot-empty');
+      empty.append(make('strong', '', 'Aucun journal à afficher'));
+      var reason = data.failedSources.length >= 3
+        ? 'Aucune source de modération n’a pu être chargée.'
+        : (data.failedSources.length
+          ? 'Certaines sources n’ont pas pu être chargées.'
+          : 'Aucun enregistrement ne correspond à cette sélection.');
+      empty.append(make('span', '', reason));
+      fragment.append(empty);
+      panel.replaceChildren(fragment);
+      return;
+    }
+
+    fragment.append(make('p', 'bot-log-summary', 'Affichage de ' + data.rangeStart + ' à ' + data.rangeEnd + ' sur ' + data.total + ' enregistrement' + (data.total > 1 ? 's' : '') + ' · Page ' + data.page + ' sur ' + data.totalPages));
+
+    var list = make('div', 'bot-log-list');
+    data.entries.forEach(function (entry) {
+      appendRow(list, entry);
+    });
+    fragment.append(list);
+
+    if (data.totalPages > 1) {
+      var pagination = make('nav', 'bot-pagination');
+      pagination.setAttribute('aria-label', 'Pagination du journal de modération');
+      if (data.page > 1) {
+        var previous = make('button', 'btn btn-outline btn-sm', 'Page précédente');
+        previous.type = 'button';
+        previous.setAttribute('data-page', String(data.page - 1));
+        pagination.append(previous);
+      }
+      pagination.append(make('span', 'muted', 'Page ' + data.page + ' sur ' + data.totalPages));
+      if (data.page < data.totalPages) {
+        var next = make('button', 'btn btn-outline btn-sm', 'Page suivante');
+        next.type = 'button';
+        next.setAttribute('data-page', String(data.page + 1));
+        pagination.append(next);
+      }
+      fragment.append(pagination);
+    }
+
+    panel.replaceChildren(fragment);
+  }
+
+  async function loadLogs() {
+    writeUrl();
+    panel.setAttribute('aria-busy', 'true');
+    var params = new URLSearchParams();
+    params.set('serveur', state.scope);
+    params.set('type', state.type);
+    params.set('q', state.q);
+    params.set('page', String(state.page));
+    try {
+      var response = await fetch('/administration/bot/api/journaux?' + params.toString(), {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { Accept: 'application/json' }
+      });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      var data = await response.json();
+      if (!data.ok) throw new Error(data.error || 'Erreur inconnue');
+      syncControls(data);
+      render(data);
+    } catch (error) {
+      panel.replaceChildren(make('div', 'notice notice-danger bot-inline-notice', 'Les journaux n’ont pas pu être chargés. Veuillez réessayer.'));
+    } finally {
+      panel.setAttribute('aria-busy', 'false');
+    }
+  }
+
+  serverList.addEventListener('click', function (event) {
+    var item = event.target.closest('[data-scope]');
+    if (!item) return;
+    event.preventDefault();
+    state.scope = item.getAttribute('data-scope');
+    state.page = 1;
+    loadLogs();
+  });
+
+  if (serverSearch) {
+    serverSearch.addEventListener('input', function () {
+      var term = serverSearch.value.trim().toLocaleLowerCase('fr');
+      var items = document.querySelectorAll('.bot-server-item');
+      Array.prototype.forEach.call(items, function (item) {
+        var name = item.getAttribute('data-scope-name') || '';
+        item.hidden = term ? !name.toLocaleLowerCase('fr').includes(term) : false;
+      });
+    });
+  }
+
+  form.addEventListener('submit', function (event) {
+    event.preventDefault();
+    state.type = typeSelect.value;
+    state.q = searchInput.value.trim().slice(0, 80);
+    state.page = 1;
+    loadLogs();
+  });
+
+  if (refreshButton) {
+    refreshButton.addEventListener('click', function () {
+      loadLogs();
+    });
+  }
+
+  panel.addEventListener('click', function (event) {
+    var button = event.target.closest('[data-page]');
+    if (!button) return;
+    var page = Number.parseInt(button.getAttribute('data-page'), 10);
+    if (!Number.isSafeInteger(page) || page < 1) return;
+    state.page = page;
+    loadLogs();
+  });
+})();
+</script>

@@ -8,6 +8,7 @@ import {
   formatAccountAge,
   formatDate,
   getDiscordCreationDate,
+  fetchBotGuilds,
 } from '../services/discord.js';
 import { getLinkedRobloxData } from '../services/roblox.js';
 import { fetchMemberSanctions, createStrike, updateStrikeReason, deleteStrike, STRIKE_ERROR_MESSAGES } from '../services/sanctions.js';
@@ -28,44 +29,46 @@ import { createDocumentationRouter } from './documentation.js';
 import { hasBotAdminRole, requireBotAdminRole } from '../auth/guards.js';
 import { getDatabasePool } from '../database.js';
 
-// -- Journal de modération (page /administration/bot) -----------------------
-// Les trois tables sont celles écrites par le bot Discord
-// (`french-squadron-utils/src/moderation.js`) : mêmes noms, mêmes colonnes.
+const BOT_ADMIN_PATH = '/administration/bot';
+const BOT_GENERAL_SCOPE_ID = 'general';
 const MODERATION_PAGE_SIZE = 50;
-
-/**
- * Aucune des trois tables n'est indexée sur sa colonne de date : un `LIMIT`
- * n'évite donc pas le tri, il borne seulement le volume transféré. Le plafond
- * reste généreux pour que la pagination courante soit exacte, et la vue prévient
- * quand une table est plus fournie — plutôt que de faire croire que le total
- * affiché est exhaustif.
- */
 const MODERATION_SOURCE_LIMIT = 2000;
-
 const MODERATION_TYPE_FILTERS = new Set(['all', 'warn', 'ban', 'case']);
+const MODERATION_TABLES = Object.freeze(['strikes', 'moderation_cases', 'moderation_bans']);
+const moderationColumnCache = new WeakMap();
 
-/** Types réellement écrits par le bot, avec leur libellé et leur gravité. */
+const MODERATION_SOURCE_LABELS = Object.freeze({
+  strikes: 'les avertissements',
+  moderation_cases: 'les cas de modération',
+  moderation_bans: 'les bannissements',
+});
+
 const MODERATION_CASE_TYPES = Object.freeze({
   exclusion: { label: 'Exclusion', severity: 'warning' },
   bannissement: { label: 'Bannissement', severity: 'danger' },
   expulsion: { label: 'Expulsion', severity: 'danger' },
 });
 
-function normalizeModerationTypeFilter(value) {
-  return MODERATION_TYPE_FILTERS.has(value) ? value : 'all';
+function firstQueryString(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
+  return '';
 }
 
-/** Toute valeur non entière strictement positive retombe sur la première page. */
+function normalizeModerationTypeFilter(value) {
+  const normalized = firstQueryString(value).trim().toLowerCase();
+  return MODERATION_TYPE_FILTERS.has(normalized) ? normalized : 'all';
+}
+
 function normalizeModerationPage(value) {
-  const page = Number.parseInt(value, 10);
+  const page = Number.parseInt(firstQueryString(value), 10);
   return Number.isSafeInteger(page) && page > 0 ? page : 1;
 }
 
-/**
- * Une date absente ou illisible ne doit ni faire échouer le rendu ni se placer
- * arbitrairement au milieu de la liste : elle reçoit un libellé vide (`—`) et
- * remonte en fin de tri.
- */
+function normalizeModerationSearch(value) {
+  return firstQueryString(value).trim().slice(0, 80);
+}
+
 function describeModerationDate(value) {
   if (!value) return { value: null, label: '—', sortTime: 0 };
   const date = value instanceof Date ? value : new Date(value);
@@ -73,126 +76,239 @@ function describeModerationDate(value) {
   return { value: date, label: formatDate(date), sortTime: date.getTime() };
 }
 
-/**
- * Lit les trois tables de modération et les ramène dans une forme unique,
- * prête à être filtrée puis paginée en mémoire.
- *
- * Chaque table est interrogeée isolément : une table absente ou en erreur est
- * signalée dans `failedSources` et n'annule pas les enregistrements que les
- * deux autres ont effectivement renvoyés. Un échec n'est jamais présenté comme
- * une table vide.
- */
-async function loadModerationLogEntries(dbPool) {
+function generalBotScope() {
+  return {
+    id: BOT_GENERAL_SCOPE_ID,
+    kind: 'general',
+    name: 'Journaux généraux',
+    guildId: null,
+    guildName: null,
+  };
+}
+
+function guildBotScope(guild) {
+  return {
+    id: guild.id,
+    kind: 'server',
+    name: guild.name,
+    guildId: guild.id,
+    guildName: guild.name,
+  };
+}
+
+function resolveBotScope(requestedId, guilds, configuredGuildId) {
+  const requested = firstQueryString(requestedId).trim();
+  if (!requested) {
+    const configured = guilds.find((guild) => guild.id === configuredGuildId);
+    const fallback = configured || guilds[0];
+    return { scope: fallback ? guildBotScope(fallback) : generalBotScope() };
+  }
+  if (requested === BOT_GENERAL_SCOPE_ID) return { scope: generalBotScope() };
+  const guild = guilds.find((entry) => entry.id === requested);
+  if (!guild) return { error: 'Ce serveur n’est pas accessible au bot.', status: 404 };
+  return { scope: guildBotScope(guild) };
+}
+
+async function loadBotGuilds(fetchFn, config) {
+  return fetchBotGuilds({
+    botToken: config.discordToken ?? webConfig.discordToken,
+    fetchFn,
+    guildId: config.guildId ?? webConfig.guildId,
+  });
+}
+
+async function getModerationColumns(dbPool, table) {
+  let byPool = moderationColumnCache.get(dbPool);
+  if (!byPool) {
+    byPool = new Map();
+    moderationColumnCache.set(dbPool, byPool);
+  }
+  if (byPool.has(table)) return byPool.get(table);
+
+  const columns = new Set();
+  try {
+    const [rows] = await dbPool.execute(`SHOW COLUMNS FROM \`${table}\``);
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const name = row.Field ?? row.field ?? row.COLUMN_NAME ?? row.column_name;
+      if (typeof name === 'string') columns.add(name);
+    }
+  } catch (error) {
+    console.warn(`[WebRoutes] Could not inspect columns of ${table}:`, error.message);
+  }
+  byPool.set(table, columns);
+  return columns;
+}
+
+function buildModerationQuery(table, columns, scope) {
+  const hasGuildId = columns.has('guild_id');
+  const hasGuildName = columns.has('guild_name');
+  if (scope.kind === 'server' && !hasGuildId && !hasGuildName) return null;
+
+  const guildIdExpression = hasGuildId ? '`guild_id` AS guild_id' : 'NULL AS guild_id';
+  const guildNameExpression = hasGuildName ? '`guild_name` AS guild_name' : 'NULL AS guild_name';
+  let baseColumns;
+  let dateColumn;
+  if (table === 'strikes') {
+    baseColumns = 'discord_id, moderator_discord_id, raison, created_at';
+    dateColumn = 'created_at';
+  } else if (table === 'moderation_cases') {
+    baseColumns = 'discord_id, type, moderator_discord_id, raison, created_at';
+    dateColumn = 'created_at';
+  } else {
+    baseColumns = 'discord_id, banned_at';
+    dateColumn = 'banned_at';
+  }
+
+  const conditions = [];
+  const params = [];
+  if (scope.kind === 'server') {
+    if (hasGuildId && /^[0-9]{17,20}$/.test(scope.guildId || '')) {
+      conditions.push('`guild_id` = ?');
+      params.push(scope.guildId);
+    } else if (hasGuildName) {
+      conditions.push('`guild_name` = ?');
+      params.push(scope.guildName);
+    } else if (hasGuildId) {
+      return null;
+    }
+  } else {
+    if (hasGuildId) conditions.push('(`guild_id` IS NULL OR `guild_id` = \'\')');
+    if (hasGuildName) conditions.push('(`guild_name` IS NULL OR `guild_name` = \'\')');
+  }
+
+  const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+  const sql = `SELECT ${baseColumns}, ${guildIdExpression}, ${guildNameExpression} FROM \`${table}\`${where} ORDER BY \`${dateColumn}\` DESC LIMIT ?`;
+  return { sql, params: [...params, MODERATION_SOURCE_LIMIT] };
+}
+
+async function queryModerationRows(dbPool, table, scope) {
+  const columns = await getModerationColumns(dbPool, table);
+  const query = buildModerationQuery(table, columns, scope);
+  if (!query) return { rows: [], available: false };
+  const [rows] = await dbPool.execute(query.sql, query.params);
+  return { rows: Array.isArray(rows) ? rows : [], available: true };
+}
+
+async function loadModerationLogEntries(dbPool, scope) {
   const entries = [];
   const failedSources = [];
   const truncatedSources = [];
 
   if (!dbPool) {
-    return { entries, failedSources: ['strikes', 'moderation_cases', 'moderation_bans'], truncatedSources };
+    return { entries, failedSources: [...MODERATION_TABLES], truncatedSources };
   }
 
-  // A. Avertissements — table `strikes`.
-  try {
-    const [rows] = await dbPool.execute(
-      `SELECT discord_id, moderator_discord_id, raison, created_at
-       FROM strikes
-       ORDER BY created_at DESC
-       LIMIT ?`,
-      [MODERATION_SOURCE_LIMIT],
-    );
-    const list = Array.isArray(rows) ? rows : [];
-    if (list.length >= MODERATION_SOURCE_LIMIT) truncatedSources.push('strikes');
-    for (const row of list) {
-      const date = describeModerationDate(row.created_at);
-      entries.push({
-        actionType: 'warn',
-        actionLabel: 'Avertissement',
-        severity: 'warning',
-        targetDiscordId: row.discord_id,
-        moderatorDiscordId: row.moderator_discord_id || null,
-        reason: row.raison || null,
-        guildName: null,
-        createdAt: date.value,
-        formattedDate: date.label,
-        sortTime: date.sortTime,
-        source: 'strikes',
-      });
+  for (const table of MODERATION_TABLES) {
+    try {
+      const { rows, available } = await queryModerationRows(dbPool, table, scope);
+      if (!available) continue;
+      if (rows.length >= MODERATION_SOURCE_LIMIT) truncatedSources.push(table);
+      for (const row of rows) {
+        const date = describeModerationDate(table === 'moderation_bans' ? row.banned_at : row.created_at);
+        const rowGuildId = row.guild_id ? String(row.guild_id) : null;
+        const rowGuildName = typeof row.guild_name === 'string' && row.guild_name ? row.guild_name : null;
+        let payload;
+        if (table === 'strikes') {
+          payload = {
+            actionType: 'warn',
+            actionLabel: 'Avertissement',
+            severity: 'warning',
+            targetDiscordId: row.discord_id,
+            moderatorDiscordId: row.moderator_discord_id || null,
+            reason: row.raison || null,
+          };
+        } else if (table === 'moderation_cases') {
+          const meta = MODERATION_CASE_TYPES[row.type] || { label: row.type || 'Cas de modération', severity: 'warning' };
+          payload = {
+            actionType: 'case',
+            actionLabel: meta.label,
+            severity: meta.severity,
+            targetDiscordId: row.discord_id,
+            moderatorDiscordId: row.moderator_discord_id || null,
+            reason: row.raison || null,
+          };
+        } else {
+          payload = {
+            actionType: 'ban',
+            actionLabel: 'Bannissement',
+            severity: 'danger',
+            targetDiscordId: row.discord_id,
+            moderatorDiscordId: null,
+            reason: null,
+          };
+        }
+        entries.push({
+          ...payload,
+          guildId: rowGuildId || (scope.kind === 'server' ? scope.guildId : null),
+          guildName: rowGuildName || (scope.kind === 'server' ? scope.guildName : null),
+          createdAt: date.value,
+          formattedDate: date.label,
+          sortTime: date.sortTime,
+          source: table,
+        });
+      }
+    } catch (error) {
+      console.error(`[WebRoutes] Error querying ${table} for the bot moderation log:`, error.message);
+      failedSources.push(table);
     }
-  } catch (error) {
-    console.error('[WebRoutes] Error querying strikes for the bot moderation log:', error.message);
-    failedSources.push('strikes');
-  }
-
-  // B. Cas de modération — table `moderation_cases`. Le bot y écrit
-  // `exclusion`, `bannissement` et `expulsion` ; un type inconnu est affiché
-  // tel quel plutôt que d'être assimilé à une sanction existante.
-  try {
-    const [rows] = await dbPool.execute(
-      `SELECT discord_id, type, moderator_discord_id, raison, created_at
-       FROM moderation_cases
-       ORDER BY created_at DESC
-       LIMIT ?`,
-      [MODERATION_SOURCE_LIMIT],
-    );
-    const list = Array.isArray(rows) ? rows : [];
-    if (list.length >= MODERATION_SOURCE_LIMIT) truncatedSources.push('moderation_cases');
-    for (const row of list) {
-      const meta = MODERATION_CASE_TYPES[row.type] || { label: row.type || 'Cas de modération', severity: 'warning' };
-      const date = describeModerationDate(row.created_at);
-      entries.push({
-        actionType: 'case',
-        actionLabel: meta.label,
-        severity: meta.severity,
-        targetDiscordId: row.discord_id,
-        moderatorDiscordId: row.moderator_discord_id || null,
-        reason: row.raison || null,
-        guildName: null,
-        createdAt: date.value,
-        formattedDate: date.label,
-        sortTime: date.sortTime,
-        source: 'moderation_cases',
-      });
-    }
-  } catch (error) {
-    console.error('[WebRoutes] Error querying moderation_cases for the bot moderation log:', error.message);
-    failedSources.push('moderation_cases');
-  }
-
-  // C. Bannissements globaux — table `moderation_bans`. Elle ne conserve ni
-  // modérateur ni raison : ces informations sont affichées vides plutôt
-  // qu'estimées à partir d'une autre source.
-  try {
-    const [rows] = await dbPool.execute(
-      `SELECT discord_id, guild_name, banned_at
-       FROM moderation_bans
-       ORDER BY banned_at DESC
-       LIMIT ?`,
-      [MODERATION_SOURCE_LIMIT],
-    );
-    const list = Array.isArray(rows) ? rows : [];
-    if (list.length >= MODERATION_SOURCE_LIMIT) truncatedSources.push('moderation_bans');
-    for (const row of list) {
-      const date = describeModerationDate(row.banned_at);
-      entries.push({
-        actionType: 'ban',
-        actionLabel: 'Bannissement',
-        severity: 'danger',
-        targetDiscordId: row.discord_id,
-        moderatorDiscordId: null,
-        reason: null,
-        guildName: row.guild_name || null,
-        createdAt: date.value,
-        formattedDate: date.label,
-        sortTime: date.sortTime,
-        source: 'moderation_bans',
-      });
-    }
-  } catch (error) {
-    console.error('[WebRoutes] Error querying moderation_bans for the bot moderation log:', error.message);
-    failedSources.push('moderation_bans');
   }
 
   return { entries, failedSources, truncatedSources };
+}
+
+function matchesModerationSearch(entry, searchTerm) {
+  if (!searchTerm) return true;
+  return [entry.actionLabel, entry.targetDiscordId, entry.moderatorDiscordId, entry.reason, entry.guildName]
+    .some((value) => typeof value === 'string' && value.toLocaleLowerCase('fr').includes(searchTerm));
+}
+
+async function buildBotLogData(dbPool, scope, query) {
+  const typeFilter = normalizeModerationTypeFilter(query.type);
+  const search = normalizeModerationSearch(query.q);
+  const searchTerm = search.toLocaleLowerCase('fr');
+  const { entries, failedSources, truncatedSources } = await loadModerationLogEntries(dbPool, scope);
+
+  const matching = entries
+    .filter((entry) => typeFilter === 'all' || entry.actionType === typeFilter)
+    .filter((entry) => matchesModerationSearch(entry, searchTerm))
+    .sort((a, b) => b.sortTime - a.sortTime);
+
+  const total = matching.length;
+  const totalPages = Math.max(1, Math.ceil(total / MODERATION_PAGE_SIZE));
+  const page = Math.min(normalizeModerationPage(query.page), totalPages);
+  const startIndex = (page - 1) * MODERATION_PAGE_SIZE;
+
+  return {
+    entries: matching.slice(startIndex, startIndex + MODERATION_PAGE_SIZE),
+    typeFilter,
+    search,
+    page,
+    totalPages,
+    total,
+    rangeStart: total ? startIndex + 1 : 0,
+    rangeEnd: Math.min(startIndex + MODERATION_PAGE_SIZE, total),
+    failedSources,
+    truncatedSources,
+    sourceLimit: MODERATION_SOURCE_LIMIT,
+  };
+}
+
+function buildBotLogUrl(scopeId, typeFilter, search, page) {
+  const params = new URLSearchParams();
+  params.set('serveur', scopeId);
+  if (typeFilter !== 'all') params.set('type', typeFilter);
+  if (search) params.set('q', search);
+  if (page > 1) params.set('page', String(page));
+  return `${BOT_ADMIN_PATH}?${params.toString()}`;
+}
+
+function resolveDbPool(pool) {
+  if (pool) return pool;
+  try {
+    return getDatabasePool();
+  } catch {
+    return null;
+  }
 }
 
 export function createMainRouter({ pool, sitePool, fetchFn, config = webConfig } = {}) {
@@ -318,56 +434,56 @@ export function createMainRouter({ pool, sitePool, fetchFn, config = webConfig }
   router.use('/administration', createFormsAdminRouter({ pool, fetchFn }));
   router.use('/documentation', createDocumentationRouter());
 
-  // Le journal de modération est réservé à l'administration du bot. `pool` est
-  // le pool principal obtenu par `server.js` via `getDatabasePool()` : la page
-  // le partage avec le reste du site, elle n'ouvre aucune connexion propre.
-  router.get('/administration/bot', requireAuth, requireBotAdminRole, async (req, res) => {
-    let dbPool = pool;
-    if (!dbPool) {
-      try {
-        dbPool = getDatabasePool();
-      } catch {
-        dbPool = null;
-      }
+  router.get(`${BOT_ADMIN_PATH}/api/serveurs`, requireAuth, requireBotAdminRole, async (req, res) => {
+    const guildResult = await loadBotGuilds(fetchFn, config);
+    if (!guildResult.ok) {
+      return res.status(guildResult.status).json({ ok: false, error: guildResult.error });
+    }
+    return res.json({
+      ok: true,
+      guilds: guildResult.guilds,
+      configuredGuildId: config.guildId ?? webConfig.guildId,
+      generalScope: generalBotScope(),
+    });
+  });
+
+  router.get(`${BOT_ADMIN_PATH}/api/journaux`, requireAuth, requireBotAdminRole, async (req, res) => {
+    const guildResult = await loadBotGuilds(fetchFn, config);
+    const resolved = resolveBotScope(req.query.serveur, guildResult.guilds, config.guildId ?? webConfig.guildId);
+    if (!resolved.scope) {
+      return res.status(resolved.status).json({ ok: false, error: resolved.error });
     }
 
-    // `?type=` et `?page=` sont normalisés côté serveur : une valeur inconnue
-    // retombe sur le filtre par défaut et une page malformée sur la première.
-    const typeFilter = normalizeModerationTypeFilter(
-      typeof req.query.type === 'string' ? req.query.type.trim().toLowerCase() : '',
-    );
+    const logData = await buildBotLogData(resolveDbPool(pool), resolved.scope, req.query);
+    return res.json({
+      ok: true,
+      scope: resolved.scope,
+      sourceLabels: MODERATION_SOURCE_LABELS,
+      guildError: guildResult.ok ? null : guildResult.error,
+      ...logData,
+    });
+  });
 
-    const { entries, failedSources, truncatedSources } = await loadModerationLogEntries(dbPool);
+  router.get(BOT_ADMIN_PATH, requireAuth, requireBotAdminRole, async (req, res) => {
+    const guildResult = await loadBotGuilds(fetchFn, config);
+    const resolved = resolveBotScope(req.query.serveur, guildResult.guilds, config.guildId ?? webConfig.guildId);
+    if (!resolved.scope) {
+      return res.status(resolved.status).render('error', {
+        title: 'Serveur introuvable',
+        message: resolved.error,
+      });
+    }
 
-    // Le filtre s'applique AVANT la pagination, sinon le compteur et les liens
-    // « page suivante » décriraient une autre liste que celle qui est affichée.
-    const matching = typeFilter === 'all'
-      ? entries
-      : entries.filter((entry) => entry.actionType === typeFilter);
-
-    // Du plus récent au plus ancien. Une date manquante remonte en fin de liste
-    // sans jamais perturber l'ordre des autres enregistrements.
-    matching.sort((a, b) => b.sortTime - a.sortTime);
-
-    const total = matching.length;
-    const totalPages = Math.max(1, Math.ceil(total / MODERATION_PAGE_SIZE));
-    // Hors bornes : on se cale sur la dernière page plutôt que d'afficher une
-    // page vide dont la navigation serait fausse.
-    const page = Math.min(normalizeModerationPage(req.query.page), totalPages);
-    const startIndex = (page - 1) * MODERATION_PAGE_SIZE;
-
+    const logData = await buildBotLogData(resolveDbPool(pool), resolved.scope, req.query);
     res.render('bot-admin', {
       title: 'Administration du bot | Site-66',
-      entries: matching.slice(startIndex, startIndex + MODERATION_PAGE_SIZE),
-      typeFilter,
-      page,
-      totalPages,
-      total,
-      rangeStart: total ? startIndex + 1 : 0,
-      rangeEnd: Math.min(startIndex + MODERATION_PAGE_SIZE, total),
-      failedSources,
-      truncatedSources,
-      sourceLimit: MODERATION_SOURCE_LIMIT,
+      guilds: guildResult.guilds,
+      configuredGuildId: config.guildId ?? webConfig.guildId,
+      selectedScope: resolved.scope,
+      guildError: guildResult.ok ? null : guildResult.error,
+      sourceLabels: MODERATION_SOURCE_LABELS,
+      buildBotLogUrl,
+      ...logData,
     });
   });
 

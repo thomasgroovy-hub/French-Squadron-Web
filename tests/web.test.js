@@ -4,9 +4,11 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { sealSession, unsealSession } from '../src/auth/session.js';
 import {
+  fetchBotGuilds,
   fetchGuildMemberRoles,
   formatAccountAge,
   getDiscordCreationDate,
+  invalidateBotGuildCache,
   invalidateGuildMemberCache,
 } from '../src/services/discord.js';
 import { getLinkedRobloxData } from '../src/services/roblox.js';
@@ -30,6 +32,7 @@ import { webConfig } from '../src/config.js';
 // so the cache must not leak between them.
 beforeEach(() => {
   invalidateGuildMemberCache();
+  invalidateBotGuildCache();
 });
 
 test('session encryption seals and unseals data with tamper protection', () => {
@@ -1062,6 +1065,138 @@ test('a full administrator passes the server-side supervision and bot-admin gate
       redirect: 'manual',
     });
     assert.equal(denied.status, 403, 'the bot log stays closed to non-administrators');
+  } finally {
+    server.close();
+  }
+});
+
+test('fetchBotGuilds lists the bot guilds with member counts only', async () => {
+  let capturedUrl = '';
+  let capturedHeaders = {};
+  const fakeFetch = async (url, options) => {
+    capturedUrl = url;
+    capturedHeaders = options.headers;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => [
+        { id: '222222222222222222', name: 'Zulu', icon: null, approximate_member_count: 7, approximate_presence_count: 2 },
+        { id: '111111111111111111', name: 'Alpha', icon: null, approximate_member_count: 42, approximate_presence_count: 12 },
+      ],
+    };
+  };
+
+  const result = await fetchBotGuilds({
+    botToken: 'bot-token-test',
+    fetchFn: fakeFetch,
+    guildId: '111111111111111111',
+  });
+
+  assert.match(capturedUrl, /users\/@me\/guilds\?limit=200&with_counts=true$/);
+  assert.equal(capturedHeaders.Authorization, 'Bot bot-token-test');
+  assert.equal(result.guilds.length, 2);
+  assert.equal(result.guilds[0].id, '111111111111111111');
+  assert.equal(result.guilds[0].memberCount, 42);
+  assert.equal(result.guilds[0].isConfigured, true);
+  assert.equal('approximate_presence_count' in result.guilds[0], false);
+});
+
+test('the bot admin API separates server bans from unscoped moderation logs', async () => {
+  const adminId = 'bot-admin-api';
+  const session = sealSession({
+    user: { id: adminId, username: 'BotAdmin', globalName: 'Bot Admin', avatarUrl: null },
+  }, webConfig.sessionSecret);
+
+  const pool = {
+    execute: async (query, params = []) => {
+      if (query.startsWith('SHOW COLUMNS')) {
+        if (query.includes('moderation_bans')) {
+          return [[{ Field: 'discord_id' }, { Field: 'guild_name' }, { Field: 'banned_at' }]];
+        }
+        return [[{ Field: 'discord_id' }, { Field: 'created_at' }]];
+      }
+      if (query.includes('`strikes`')) {
+        return [[{
+          discord_id: 'warn-target',
+          moderator_discord_id: 'warn-moderator',
+          raison: 'Propos inappropriés',
+          created_at: new Date('2024-02-15T10:00:00Z'),
+        }]];
+      }
+      if (query.includes('`moderation_cases`')) return [[]];
+      if (query.includes('`moderation_bans`')) {
+        if (params[0] === 'Site-66') {
+          return [[{
+            discord_id: 'ban-target',
+            guild_name: 'Site-66',
+            banned_at: new Date('2024-02-16T12:00:00Z'),
+          }]];
+        }
+        return [[]];
+      }
+      return [[]];
+    },
+  };
+
+  const fakeFetch = async (url) => {
+    if (url.endsWith(`/members/${adminId}`)) {
+      return { ok: true, status: 200, json: async () => ({ roles: [webConfig.botAdminRoleIds[0]] }) };
+    }
+    if (url.includes('/users/@me/guilds')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [
+          { id: '111111111111111111', name: 'Site-66', icon: null, approximate_member_count: 120 },
+          { id: '222222222222222222', name: 'Alliés', icon: 'icon-hash', approximate_member_count: 9 },
+        ],
+      };
+    }
+    return { ok: false, status: 404 };
+  };
+
+  const app = createApp({ pool, sitePool: null, fetchFn: fakeFetch });
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+  const base = `http://localhost:${server.address().port}`;
+  const headers = { Cookie: `${webConfig.cookieName}=${session}` };
+
+  try {
+    const pageRes = await fetch(`${base}/administration/bot?serveur=111111111111111111`, { headers });
+    const html = await pageRes.text();
+    assert.equal(pageRes.status, 200);
+    assert.match(html, /Bannissements enregistrés pour ce serveur/);
+    assert.match(html, /ban-target/);
+    assert.match(html, /Journaux généraux/);
+    assert.equal(html.includes('bot-token'), false);
+
+    const guildsRes = await fetch(`${base}/administration/bot/api/serveurs`, { headers });
+    const guildsPayload = await guildsRes.json();
+    assert.equal(guildsPayload.ok, true);
+    assert.equal(guildsPayload.guilds.length, 2);
+    assert.equal(guildsPayload.guilds[0].name, 'Alliés');
+    assert.equal(JSON.stringify(guildsPayload).includes('bot-token'), false);
+
+    const generalRes = await fetch(`${base}/administration/bot/api/journaux?serveur=general&type=warn`, { headers });
+    const generalPayload = await generalRes.json();
+    assert.equal(generalRes.status, 200);
+    assert.equal(generalPayload.scope.kind, 'general');
+    assert.equal(generalPayload.entries.length, 1);
+    assert.equal(generalPayload.entries[0].actionType, 'warn');
+    assert.equal(generalPayload.entries[0].guildId, null);
+
+    const serverRes = await fetch(`${base}/administration/bot/api/journaux?serveur=111111111111111111`, { headers });
+    const serverPayload = await serverRes.json();
+    assert.equal(serverRes.status, 200);
+    assert.equal(serverPayload.scope.kind, 'server');
+    assert.equal(serverPayload.entries.length, 1);
+    assert.equal(serverPayload.entries[0].actionType, 'ban');
+    assert.equal(serverPayload.entries[0].guildName, 'Site-66');
+
+    const invalidRes = await fetch(`${base}/administration/bot/api/journaux?serveur=999999999999999999`, { headers });
+    const invalidPayload = await invalidRes.json();
+    assert.equal(invalidRes.status, 404);
+    assert.equal(invalidPayload.ok, false);
   } finally {
     server.close();
   }

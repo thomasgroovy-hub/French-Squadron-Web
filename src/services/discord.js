@@ -291,6 +291,70 @@ export async function fetchGuildMemberRoles({
 
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
 
+const botGuildListCache = { token: null, value: null, expires: 0 };
+const BOT_GUILD_LIST_TTL_MS = 60 * 1000;
+
+export function invalidateBotGuildCache() {
+  botGuildListCache.token = null;
+  botGuildListCache.value = null;
+  botGuildListCache.expires = 0;
+}
+
+function toDiscordGuildIconUrl(guild) {
+  if (!guild?.id || !guild.icon) return null;
+  const extension = guild.icon.startsWith('a_') ? 'gif' : 'png';
+  return `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.${extension}?size=128`;
+}
+
+export async function fetchBotGuilds({
+  botToken = webConfig.discordToken,
+  fetchFn = fetch,
+  guildId = webConfig.guildId,
+  forceRefresh = false,
+} = {}) {
+  const now = Date.now();
+  if (!forceRefresh && botGuildListCache.value && botGuildListCache.token === botToken && botGuildListCache.expires > now) {
+    return { ok: true, guilds: botGuildListCache.value, status: 200, fromCache: true };
+  }
+  if (!botToken) {
+    return { ok: false, guilds: [], status: 503, error: 'Le bot Discord n’est pas configuré.' };
+  }
+
+  try {
+    const response = await fetchFn(`${DISCORD_API_BASE}/users/@me/guilds?limit=200&with_counts=true`, {
+      headers: { Authorization: `Bot ${botToken}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) {
+      console.warn(`[DiscordService] Bot guild list returned ${response.status}`);
+      return { ok: false, guilds: [], status: response.status, error: 'La liste des serveurs du bot n’a pas pu être chargée.' };
+    }
+
+    const payload = await response.json();
+    const guilds = (Array.isArray(payload) ? payload : [])
+      .filter((guild) => guild?.id && guild?.name)
+      .map((guild) => {
+        const memberCount = Number(guild.approximate_member_count);
+        return {
+          id: String(guild.id),
+          name: String(guild.name),
+          iconUrl: toDiscordGuildIconUrl(guild),
+          memberCount: Number.isFinite(memberCount) && memberCount >= 0 ? memberCount : null,
+          isConfigured: String(guild.id) === String(guildId || ''),
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }));
+
+    botGuildListCache.token = botToken;
+    botGuildListCache.value = guilds;
+    botGuildListCache.expires = now + BOT_GUILD_LIST_TTL_MS;
+    return { ok: true, guilds, status: 200, fromCache: false };
+  } catch (error) {
+    console.error('[DiscordService] Error fetching bot guild list:', error.message);
+    return { ok: false, guilds: [], status: 500, error: 'La liste des serveurs du bot n’a pas pu être chargée.' };
+  }
+}
+
 function toDiscordAvatarUrl(user) {
   if (!user) return null;
   if (user.avatar) {
