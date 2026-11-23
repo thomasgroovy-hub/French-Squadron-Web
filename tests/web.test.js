@@ -1129,7 +1129,7 @@ test('fetchBotGuilds lists the bot guilds with member counts only', async () => 
   assert.equal('approximate_presence_count' in result.guilds[0], false);
 });
 
-test('the bot admin API separates source-tagged warnings from unscoped moderation logs', async () => {
+test('the bot admin API separates source-tagged sanctions from unscoped moderation logs', async () => {
   const adminId = 'bot-admin-api';
   const session = sealSession({
     user: { id: adminId, username: 'BotAdmin', globalName: 'Bot Admin', avatarUrl: null },
@@ -1144,6 +1144,17 @@ test('the bot admin API separates source-tagged warnings from unscoped moderatio
         if (query.includes('strikes')) {
           return [[
             { Field: 'discord_id' },
+            { Field: 'moderator_discord_id' },
+            { Field: 'raison' },
+            { Field: 'created_at' },
+            { Field: 'guild_id' },
+            { Field: 'guild_name' },
+          ]];
+        }
+        if (query.includes('moderation_cases')) {
+          return [[
+            { Field: 'discord_id' },
+            { Field: 'type' },
             { Field: 'moderator_discord_id' },
             { Field: 'raison' },
             { Field: 'created_at' },
@@ -1176,7 +1187,31 @@ test('the bot admin API separates source-tagged warnings from unscoped moderatio
         }
         return [[]];
       }
-      if (query.includes('`moderation_cases`')) return [[]];
+      if (query.includes('`moderation_cases`')) {
+        if (query.includes('`guild_id` = ?')) {
+          return [[{
+            discord_id: 'case-target',
+            type: 'exclusion',
+            moderator_discord_id: 'case-moderator',
+            raison: 'Exclusion temporaire',
+            guild_id: '111111111111111111',
+            guild_name: 'Site-66',
+            created_at: new Date('2024-02-17T09:00:00Z'),
+          }]];
+        }
+        if (query.includes('`guild_id` IS NULL')) {
+          return [[{
+            discord_id: 'legacy-case',
+            type: 'expulsion',
+            moderator_discord_id: 'legacy-case-moderator',
+            raison: 'Ancienne expulsion',
+            guild_id: null,
+            guild_name: null,
+            created_at: new Date('2024-02-13T09:00:00Z'),
+          }]];
+        }
+        return [[]];
+      }
       if (query.includes('`moderation_bans`')) {
         if (params[0] === 'Site-66') {
           return [[{
@@ -1218,8 +1253,9 @@ test('the bot admin API separates source-tagged warnings from unscoped moderatio
     const pageRes = await fetch(`${base}/administration/bot?serveur=111111111111111111`, { headers });
     const html = await pageRes.text();
     assert.equal(pageRes.status, 200);
-    assert.match(html, /Avertissements et bannissements enregistrés pour ce serveur/);
+    assert.match(html, /Avertissements, cas de modération et bannissements enregistrés pour ce serveur/);
     assert.match(html, /warn-target/);
+    assert.match(html, /case-target/);
     assert.match(html, /ban-target/);
     assert.match(html, /Journaux généraux/);
     assert.equal(html.includes('bot-token'), false);
@@ -1240,16 +1276,29 @@ test('the bot admin API separates source-tagged warnings from unscoped moderatio
     assert.equal(generalPayload.entries[0].targetDiscordId, 'legacy-warn');
     assert.equal(generalPayload.entries[0].guildId, null);
 
+    const generalCaseRes = await fetch(`${base}/administration/bot/api/journaux?serveur=general&type=case`, { headers });
+    const generalCasePayload = await generalCaseRes.json();
+    assert.equal(generalCaseRes.status, 200);
+    assert.equal(generalCasePayload.entries.length, 1);
+    assert.equal(generalCasePayload.entries[0].actionType, 'case');
+    assert.equal(generalCasePayload.entries[0].targetDiscordId, 'legacy-case');
+    assert.equal(generalCasePayload.entries[0].guildId, null);
+
     const serverRes = await fetch(`${base}/administration/bot/api/journaux?serveur=111111111111111111`, { headers });
     const serverPayload = await serverRes.json();
     assert.equal(serverRes.status, 200);
     assert.equal(serverPayload.scope.kind, 'server');
-    assert.equal(serverPayload.entries.length, 2);
-    assert.deepEqual(serverPayload.entries.map((entry) => entry.actionType).sort(), ['ban', 'warn']);
+    assert.equal(serverPayload.entries.length, 3);
+    assert.deepEqual(serverPayload.entries.map((entry) => entry.actionType).sort(), ['ban', 'case', 'warn']);
     const serverWarning = serverPayload.entries.find((entry) => entry.actionType === 'warn');
     assert.equal(serverWarning.targetDiscordId, 'warn-target');
     assert.equal(serverWarning.guildId, '111111111111111111');
     assert.equal(serverWarning.guildName, 'Site-66');
+    const serverCase = serverPayload.entries.find((entry) => entry.actionType === 'case');
+    assert.equal(serverCase.targetDiscordId, 'case-target');
+    assert.equal(serverCase.actionLabel, 'Exclusion');
+    assert.equal(serverCase.guildId, '111111111111111111');
+    assert.equal(serverCase.guildName, 'Site-66');
 
     const invalidRes = await fetch(`${base}/administration/bot/api/journaux?serveur=999999999999999999`, { headers });
     const invalidPayload = await invalidRes.json();
